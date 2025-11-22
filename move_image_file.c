@@ -12,10 +12,10 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-#define GPIO_BTN0 26
-#define GPIO_BTN1 46
-#define GPIO_BTN2 47
-#define GPIO_BTN3 27
+#define GPIO_UP 67
+#define GPIO_DOWN 68
+#define GPIO_LEFT 26
+#define GPIO_RIGHT 44
 #define GPIO_PATH "/sys/class/gpio"
 #define MOVE_STEP 10
 
@@ -166,10 +166,10 @@ void cleanup() {
     }
     
     // Unexport GPIOs
-    gpio_unexport(GPIO_BTN0);
-    gpio_unexport(GPIO_BTN1);
-    gpio_unexport(GPIO_BTN2);
-    gpio_unexport(GPIO_BTN3);
+    gpio_unexport(GPIO_UP);
+    gpio_unexport(GPIO_DOWN);
+    gpio_unexport(GPIO_LEFT);
+    gpio_unexport(GPIO_RIGHT);
     
     printf("Cleanup complete\n");
 }
@@ -183,8 +183,8 @@ void signal_handler(int signo) {
 }
 
 int main(int argc, char *argv[]) {
-    int btn0_prev = 0, btn1_prev = 0, btn2_prev = 0, btn3_prev = 0;
-    int btn0_curr, btn1_curr, btn2_curr, btn3_curr;
+    int up_prev = 0, down_prev = 0, left_prev = 0, right_prev = 0;
+    int up_curr, down_curr, left_curr, right_curr;
     
     // Set up signal handlers
     signal(SIGINT, signal_handler);
@@ -235,22 +235,22 @@ int main(int argc, char *argv[]) {
     
     // Set up GPIO buttons
     printf("Setting up GPIO buttons...\n");
-    if (gpio_export(GPIO_BTN0) < 0) {
-        fprintf(stderr, "Warning: Could not export BTN0\n");
+    if (gpio_export(GPIO_UP) < 0) {
+        fprintf(stderr, "Warning: Could not export UP\n");
     }
-    if (gpio_export(GPIO_BTN1) < 0) {
-        fprintf(stderr, "Warning: Could not export BTN1\n");
+    if (gpio_export(GPIO_DOWN) < 0) {
+        fprintf(stderr, "Warning: Could not export DOWN\n");
     }
-    if (gpio_export(GPIO_BTN2) < 0) {
-        fprintf(stderr, "Warning: Could not export BTN2\n");
+    if (gpio_export(GPIO_LEFT) < 0) {
+        fprintf(stderr, "Warning: Could not export LEFT\n");
     }
-    if (gpio_export(GPIO_BTN3) < 0) {
-        fprintf(stderr, "Warning: Could not export BTN3\n");
+    if (gpio_export(GPIO_RIGHT) < 0) {
+        fprintf(stderr, "Warning: Could not export RIGHT\n");
     }
-    gpio_set_direction(GPIO_BTN0, "in");
-    gpio_set_direction(GPIO_BTN1, "in");
-    gpio_set_direction(GPIO_BTN2, "in");
-    gpio_set_direction(GPIO_BTN3, "in");
+    gpio_set_direction(GPIO_UP, "in");
+    gpio_set_direction(GPIO_DOWN, "in");
+    gpio_set_direction(GPIO_LEFT, "in");
+    gpio_set_direction(GPIO_RIGHT, "in");
     
     // Initialize image position (centered)
     image_x_pos = (vinfo.xres - img_width) / 2;
@@ -261,58 +261,58 @@ int main(int argc, char *argv[]) {
     // Draw initial image
     draw_image(image_x_pos, image_y_pos);
     
-    printf("Ready! BTN0=Up, BTN1=Down, BTN2=Left, BTN3=Right. Press Ctrl+C to exit.\n");
+    printf("Ready! UP=67, DOWN=68, LEFT=26, RIGHT=44. Press Ctrl+C to exit.\n");
     
     // Main loop
     while (running) {
         // Read current button states
-        btn0_curr = gpio_get_value(GPIO_BTN0);
-        btn1_curr = gpio_get_value(GPIO_BTN1);
-        btn2_curr = gpio_get_value(GPIO_BTN2);
-        btn3_curr = gpio_get_value(GPIO_BTN3);
+        up_curr = gpio_get_value(GPIO_UP);
+        down_curr = gpio_get_value(GPIO_DOWN);
+        left_curr = gpio_get_value(GPIO_LEFT);
+        right_curr = gpio_get_value(GPIO_RIGHT);
         
         // Detect button presses (rising edge)
-        if (btn0_curr && !btn0_prev) {
-            // BTN0 pressed - move image UP
+        if (up_curr && !up_prev) {
+            // UP pressed - move image UP
             image_y_pos -= MOVE_STEP;
             if (image_y_pos < 0) image_y_pos = 0;
             draw_image(image_x_pos, image_y_pos);
-            printf("BTN0 pressed - Moving UP to (%d, %d)\n", image_x_pos, image_y_pos);
+            printf("UP pressed - Moving UP to (%d, %d)\n", image_x_pos, image_y_pos);
         }
         
-        if (btn1_curr && !btn1_prev) {
-            // BTN1 pressed - move image DOWN
+        if (down_curr && !down_prev) {
+            // DOWN pressed - move image DOWN
             image_y_pos += MOVE_STEP;
             int max_y = vinfo.yres - img_height;
             if (image_y_pos > max_y) image_y_pos = max_y;
             if (image_y_pos < 0) image_y_pos = 0;
             draw_image(image_x_pos, image_y_pos);
-            printf("BTN1 pressed - Moving DOWN to (%d, %d)\n", image_x_pos, image_y_pos);
+            printf("DOWN pressed - Moving DOWN to (%d, %d)\n", image_x_pos, image_y_pos);
         }
         
-        if (btn2_curr && !btn2_prev) {
-            // BTN2 pressed - move image LEFT
+        if (left_curr && !left_prev) {
+            // LEFT pressed - move image LEFT
             image_x_pos -= MOVE_STEP;
             if (image_x_pos < 0) image_x_pos = 0;
             draw_image(image_x_pos, image_y_pos);
-            printf("BTN2 pressed - Moving LEFT to (%d, %d)\n", image_x_pos, image_y_pos);
+            printf("LEFT pressed - Moving LEFT to (%d, %d)\n", image_x_pos, image_y_pos);
         }
         
-        if (btn3_curr && !btn3_prev) {
-            // BTN3 pressed - move image RIGHT
+        if (right_curr && !right_prev) {
+            // RIGHT pressed - move image RIGHT
             image_x_pos += MOVE_STEP;
             int max_x = vinfo.xres - img_width;
             if (image_x_pos > max_x) image_x_pos = max_x;
             if (image_x_pos < 0) image_x_pos = 0;
             draw_image(image_x_pos, image_y_pos);
-            printf("BTN3 pressed - Moving RIGHT to (%d, %d)\n", image_x_pos, image_y_pos);
+            printf("RIGHT pressed - Moving RIGHT to (%d, %d)\n", image_x_pos, image_y_pos);
         }
         
         // Update previous button states
-        btn0_prev = btn0_curr;
-        btn1_prev = btn1_curr;
-        btn2_prev = btn2_curr;
-        btn3_prev = btn3_curr;
+        up_prev = up_curr;
+        down_prev = down_curr;
+        left_prev = left_curr;
+        right_prev = right_curr;
         
         // Small delay to prevent CPU hogging
         usleep(50000); // 50ms
