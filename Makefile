@@ -1,7 +1,16 @@
-CC := arm-linux-gnueabihf-gcc
+CC_BB  := arm-linux-gnueabihf-gcc
+CC_PC  := gcc
+SRC    := main.c
+EXEC   := sprite_test
 
-all:
-	$(CC) -static -O2 -o move_image_file move_image_file.c -lm
+all: beaglebone
+
+beaglebone:
+	$(CC_BB) -static -O2 -o $(EXEC) $(SRC) -lm
+
+laptop:
+	$(CC_PC) $(SRC) -o $(EXEC) -DUSE_SDL `sdl2-config --cflags --libs` -lm
 
 clean:
-	rm -f move_image_file
+	rm -f $(EXEC)
+
