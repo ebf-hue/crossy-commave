@@ -10,7 +10,7 @@
 
 // ---------- Common config ----------
 
-#define MOVE_STEP 10
+#define MOVE_STEP 38
 
 static unsigned char *image_data = NULL;
 static int img_width = 0, img_height = 0;
