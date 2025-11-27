@@ -182,6 +182,7 @@ static void draw_lanes_and_sprite(void) {
         // Lane total_lanes_current-1: start_lane (end)
         // Lane total_lanes_current (off bottom): building (if visible)
         Lane *lane;
+        if (lane_index < -1) continue; // quick bounds check
         if (lane_index == -1 || lane_index == total_lanes_current) {
             lane = &lane_templates[5];  // building (sandwich lanes)
         } else if (lane_index == 0) {
