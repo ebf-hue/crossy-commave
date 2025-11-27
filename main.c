@@ -47,7 +47,6 @@ typedef struct {
     int height;
 } Lane;
 
-static Lane lanes[MAX_VISIBLE_LANES];
 static Lane lane_templates[6];  // 0=bottom, 1=middle, 2=top, 3=MBTA, 4=start, 5=building
 static int num_lane_types = 0;
 static int camera_y = 0;  // Camera offset in world space
@@ -243,40 +242,6 @@ static void draw_lanes_and_sprite(void) {
             put_pixel(screen_x, screen_y, color);
         }
     }
-}
-
-static void show_level_passed_popup(void) {
-    if (!level_passed_data) return;
-    
-    // Draw the current screen first
-    draw_lanes_and_sprite();
-    
-    // Draw popup centered on screen
-    int popup_x = (screen_width - level_passed_width) / 2;
-    int popup_y = (screen_height - level_passed_height) / 2;
-    
-    for (int y = 0; y < level_passed_height; y++) {
-        int screen_y = popup_y + y;
-        if (screen_y < 0 || screen_y >= screen_height) continue;
-        
-        for (int x = 0; x < level_passed_width; x++) {
-            int screen_x = popup_x + x;
-            if (screen_x < 0 || screen_x >= screen_width) continue;
-            
-            int img_idx = (y * level_passed_width + x) * 4;  // RGBA
-            unsigned char r = level_passed_data[img_idx];
-            unsigned char g = level_passed_data[img_idx + 1];
-            unsigned char b = level_passed_data[img_idx + 2];
-            unsigned char a = level_passed_data[img_idx + 3];
-            
-            if (a < 128) continue;  // Skip transparent pixels
-            
-            uint16_t color = rgb_to_rgb565(r, g, b);
-            put_pixel(screen_x, screen_y, color);
-        }
-    }
-    
-    present_frame();
 }
 
 // ---------- SDL backend (laptop / macOS) ----------
@@ -494,10 +459,12 @@ int platform_init(void) {
 
     if (ioctl(fb_fd, FBIOGET_VSCREENINFO, &vinfo) < 0) {
         perror("FBIOGET_VSCREENINFO");
+        close(fb_fd);
         return -1;
     }
     if (ioctl(fb_fd, FBIOGET_FSCREENINFO, &finfo) < 0) {
         perror("FBIOGET_FSCREENINFO");
+        close(fb_fd);
         return -1;
     }
 
@@ -507,6 +474,7 @@ int platform_init(void) {
     if (fbp == MAP_FAILED) {
         perror("mmap framebuffer");
         fbp = NULL;
+        close(fb_fd);
         return -1;
     }
 
@@ -706,11 +674,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     
-    // Initialize visible lanes - not used anymore, we'll pick lanes dynamically
-    for (int i = 0; i < MAX_VISIBLE_LANES; i++) {
-        lanes[i] = lane_templates[1];  // default to middle
-    }
-
     if (platform_init() != 0) {
         stbi_image_free(image_data);
         for (int i = 0; i < num_lane_types; i++) {
