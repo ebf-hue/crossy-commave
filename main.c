@@ -13,6 +13,9 @@
 
 #define MOVE_STEP 34
 
+#define VERTICAL_MOVE_DELAY 6 // min number of frames between steps up or down
+static int vertical_move_cooldown = 0;
+
 static unsigned char *image_data = NULL;
 
 // player sprite
@@ -905,10 +908,22 @@ int main(int argc, char *argv[]) {
             running = 0;
         }
 
+        // decrement movement cooldown
+        if (vertical_move_cooldown > 0) vertical_move_cooldown--;
+
         // Move character in world space
         // Vertical movement: only in lane increments (34 pixels)
-        if (up)    image_y_pos -= MOVE_STEP;
-        if (down)  image_y_pos += MOVE_STEP;
+        // only allow movement up/down if enough frames have passed
+        if (vertical_move_cooldown == 0) {
+            if (up) {
+                image_y_pos -= MOVE_STEP;
+                vertical_move_cooldown = VERTICAL_MOVE_DELAY;
+            }
+            else if (down) {
+                image_y_pos += MOVE_STEP;
+                vertical_move_cooldown = VERTICAL_MOVE_DELAY;
+            }
+        }
         
         // Horizontal movement: left and right (no camera tracking horizontally)
         if (left)  image_x_pos -= MOVE_STEP;
