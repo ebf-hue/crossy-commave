@@ -14,9 +14,28 @@
 #define MOVE_STEP 34
 
 static unsigned char *image_data = NULL;
+
+// player sprite
 static int img_width = 0, img_height = 0;
 static int image_x_pos = 0;
 static int image_y_pos = 0;
+
+// car sprite
+static unsigned char* car_data = NULL;
+static int car_width = 0, car_height = 0;
+#define MAX_CARS 32
+typedef struct {
+    int active;
+    int x;
+    int y;
+    int speed; // px per frame
+    int dir; // +1 = right, -1 = left
+    int lane_index; // which lane this car belongs to
+} Car;
+// initialize cars array
+static Car cars[MAX_CARS];
+static int frame_counter = 0; // for spawn timing
+
 static int screen_width = 480;
 static int screen_height = 272;
 static volatile int running = 1;
@@ -85,6 +104,12 @@ static void show_popup_and_wait(unsigned char *popup_data, int popup_width, int 
 static uint16_t rgb_to_rgb565(unsigned char r, unsigned char g, unsigned char b) {
     return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
+// helper function to remove active cars
+static void reset_cars(void) {
+    for (int i = 0; i < MAX_CARS; i++) {
+        cars[i].active = 0;
+    }
+}
 
 static void init_level(int level_index) {
     if (level_index >= NUM_LEVELS) {
@@ -101,6 +126,9 @@ static void init_level(int level_index) {
     for (int i = 0; i < total_lanes_current; i++) {
         mbta_lane_indices[i] = 0;
     }
+
+    // reset this level's cars
+    reset_cars();
     
     // Randomly place MBTA lane pairs
     if (num_lane_types >= 4 && num_mbta_pairs > 0 && total_lanes_current >= 8) {
@@ -153,6 +181,123 @@ static void init_level(int level_index) {
         show_popup_and_wait(level_intro_data[level_index], 
                            level_intro_width[level_index], 
                            level_intro_height[level_index]);
+    }
+}
+
+static void spawn_car_in_lane(int lane_index, int dir) {
+    // use next free slot
+    for (int i = 0; i < MAX_CARS; i++) {
+        // mark as active and set lane, direction, and speed
+        if (!cars[i].active) {
+            cars[i].active = 1;
+            cars[i].lane_index = lane_index;
+            cars[i].dir = dir;
+            cars[i].speed = 2;
+
+            // center the car vertically in this lane
+            cars[i].y = lane_index * LANE_HEIGHT + ((LANE_HEIGHT - car_height) / 2);
+
+            // start offscreen on either side
+            if (dir > 0) {
+                cars[i].x = -car_width;
+            } else {
+                cars[i].x = screen_width;
+            }
+            return;
+        }
+    }
+    // else, no free slots and do nothing
+}
+
+static void update_cars(void) {
+    // update each active car's position
+    for (int i = 0; i < MAX_CARS; i++) {
+        // skip if not active
+        if (!cars[i].active) continue;
+        // update position
+        cars[i].x += cars[i].dir * cars[i].speed;
+        // mark as inactive once it gets off screen
+        if (cars[i].x > screen_width || cars[i].x < -car_width) {
+            cars[i].active = 0;
+        }
+    }
+
+    // spawn a new car every N frames
+    frame_counter++;
+    if (frame_counter > 1000000) frame_counter = 0; // occasional reset
+    if (frame_counter % 30 == 0) {
+        // pick a random lane
+        int index_min = 2;
+        int index_max = total_lanes_current - 3;
+        if (index_max > index_min) {
+            int lane_index = index_min + rand() % (index_max - index_min + 1);
+
+            // only spawn on normal non-mbta lanes
+            if (mbta_lane_indices[lane_index] == 0) {
+                // pick a random direction
+                int dir = (rand() & 1)? 1 : -1;
+                spawn_car_in_lane(lane_index, dir);
+            }
+        }
+    }
+}
+
+static int check_car_collisions(void) {
+    // player hitbox
+    int px = image_x_pos;
+    int py = image_y_pos;
+    int pw = img_width;
+    int ph = img_height;
+
+    // check each car
+    for (int i = 0; i < MAX_CARS; i++) {
+        // skip inactive ones
+        if (!cars[i].active) continue;
+
+        // car hitbox
+        int cx = cars[i].x;
+        int cy = cars[i].y;
+        int cw = car_width;
+        int ch = car_height;
+
+        int overlap = (px < cx + cw) &&
+            (px + pw > cx) &&
+            (py < cy + ch) &&
+            (py + ph > cy);
+        // collision detected
+        if (overlap) return 1;
+    }
+    // no collisions
+    return 0;
+}
+
+static void draw_cars(void) {
+    for (int i = 0; i < MAX_CARS; i++) {
+        // skip inactive cars
+        if (!cars[i].active) continue;
+       
+        // loop through every pixel
+        int sprite_screen_y = cars[i].y - camera_y;
+        for (int y = 0; y < car_height; y++) {
+            int screen_y = sprite_screen_y + y;
+            // skip out of frame
+            if (screen_y < 0 || screen_y >= screen_height) continue;
+
+            for (int x = 0; x < car_width; x++) {
+                int screen_x = cars[i].x + x;
+                // skip out of frame
+                if (screen_x < 0 || screen_x >= screen_width) continue;
+
+                int img_idx = (y * car_width + x) * 4;
+                unsigned char r = car_data[img_idx];
+                unsigned char g = car_data[img_idx + 1];
+                unsigned char b = car_data[img_idx + 2];
+                unsigned char a = car_data[img_idx + 3];
+                if (a < 128) continue;
+                uint16_t color = rgb_to_rgb565(r, g, b);
+                put_pixel(screen_x, screen_y, color);
+            }
+        }
     }
 }
 
@@ -218,6 +363,9 @@ static void draw_lanes_and_sprite(void) {
             }
         }
     }
+
+    // draw cars
+    draw_cars();
     
     // Draw sprite at screen position
     int sprite_screen_y = image_y_pos - camera_y;
@@ -614,10 +762,20 @@ int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
 
+    // load player sprite
     int img_channels;
     image_data = stbi_load("assets/guy1.png", &img_width, &img_height, &img_channels, 4);  // Force RGBA
     if (!image_data) {
-        fprintf(stderr, "Error: Could not load image 'guy1.png'\n");
+        fprintf(stderr, "Error: Could not load player sprite\n");
+        return 1;
+    }
+
+    // load car sprite
+    int car_channels;
+    car_data = stbi_load("assets/car1.png", &car_width, &car_height, &car_channels, 4);
+    if (!car_data) {
+        fprintf(stderr, "Error: Could not load car sprite\n");
+        stbi_image_free(image_data);
         return 1;
     }
 
@@ -667,6 +825,7 @@ int main(int argc, char *argv[]) {
     if (num_lane_types < 3) {
         fprintf(stderr, "Error: Need at least bottom, middle, and top lanes\n");
         stbi_image_free(image_data);
+        stbi_image_free(car_data);
         for (int i = 0; i < num_lane_types; i++) {
             if (lane_templates[i].data) {
                 stbi_image_free(lane_templates[i].data);
@@ -677,6 +836,7 @@ int main(int argc, char *argv[]) {
     
     if (platform_init() != 0) {
         stbi_image_free(image_data);
+        stbi_image_free(car_data);
         for (int i = 0; i < num_lane_types; i++) {
             if (lane_templates[i].data) {
                 stbi_image_free(lane_templates[i].data);
@@ -746,7 +906,17 @@ int main(int argc, char *argv[]) {
 
         // Update which lanes are visible
         first_lane_index = camera_y / LANE_HEIGHT;
+        
+        // update car positions
+        update_cars();
 
+        // check for car collisions
+        if (check_car_collisions()) {
+            // restart this level
+            init_level(current_level);
+            continue; // don't draw
+        }
+        
         draw_lanes_and_sprite();
         present_frame();
 
@@ -762,6 +932,11 @@ int main(int argc, char *argv[]) {
     if (image_data) {
         stbi_image_free(image_data);
         image_data = NULL;
+    }
+
+    if (car_data) {
+        stbi_image_free(car_data);
+        car_data = NULL;
     }
     
     if (level_passed_data) {
