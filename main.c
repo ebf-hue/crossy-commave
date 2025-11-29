@@ -22,6 +22,7 @@ static unsigned char *image_data = NULL;
 static int img_width = 0, img_height = 0;
 static int image_x_pos = 0;
 static int image_y_pos = 0;
+static int player_facing_left = 0; // 1 for left, 0 for right
 
 // car sprite
 static int car_speed = 2; // default 2, set in init_level (increases with level)
@@ -444,7 +445,13 @@ static void draw_lanes_and_sprite(void) {
             int screen_x = image_x_pos + x;
             if (screen_x < 0 || screen_x >= screen_width) continue;
             
-            int img_idx = (y * img_width + x) * 4;  // 4 channels: RGBA
+            // flip left or right
+            int src_x = x;
+            if (player_facing_left) {
+                src_x = img_width - 1 - x;
+            }
+
+            int img_idx = (y * img_width + src_x) * 4;  // 4 channels: RGBA
             unsigned char r = image_data[img_idx];
             unsigned char g = image_data[img_idx + 1];
             unsigned char b = image_data[img_idx + 2];
@@ -940,8 +947,14 @@ int main(int argc, char *argv[]) {
         }
         
         // Horizontal movement: left and right (no camera tracking horizontally)
-        if (left)  image_x_pos -= MOVE_STEP;
-        if (right) image_x_pos += MOVE_STEP;
+        if (left) {
+            image_x_pos -= MOVE_STEP;
+            player_facing_left = 1;
+        }
+        if (right) {
+            image_x_pos += MOVE_STEP;
+            player_facing_left = 0;
+        }
 
         // Clamp vertical movement within lane bounds
         if (image_y_pos < 0) image_y_pos = 0;  // Can't go below lane 0
