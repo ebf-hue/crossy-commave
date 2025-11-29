@@ -45,6 +45,7 @@ static volatile int running = 1;
 #define MAX_VISIBLE_LANES 10  // screen_height/LANE_HEIGHT + buffer
 #define NUM_MBTA_LANES 3  // Number of MBTA lanes to randomly place
 #define NUM_LEVELS 5
+#define MAX_TOTAL_LANES 35
 
 // Level definitions
 typedef struct {
@@ -73,6 +74,9 @@ static int first_lane_index = 0;  // Which lane is at the top
 static int mbta_lane_indices[35];  // Support up to 35 lanes max
 static int current_level = 0;
 static int total_lanes_current = 0;
+
+// store traffic direction for each lane
+static int lane_direction[MAX_TOTAL_LANES]; // +1 = right, -1 = left
 
 // Level passed popup
 static unsigned char *level_passed_data = NULL;
@@ -118,9 +122,16 @@ static void init_level(int level_index) {
         return;
     }
     
+    srand(time(NULL) + level_index);  // Different seed per level
+    
     current_level = level_index;
     total_lanes_current = levels[level_index].total_lanes;
     int num_mbta_pairs = levels[level_index].num_mbta_pairs;
+
+    // assign random directions to each lane
+    for (int i = 0; i < total_lanes_current; i++) {
+        lane_direction[i] = (rand() & 1) ? 1 : -1;
+    }
     
     // Initialize MBTA lane distribution
     for (int i = 0; i < total_lanes_current; i++) {
@@ -132,7 +143,6 @@ static void init_level(int level_index) {
     
     // Randomly place MBTA lane pairs
     if (num_lane_types >= 4 && num_mbta_pairs > 0 && total_lanes_current >= 8) {
-        srand(time(NULL) + level_index);  // Different seed per level
         int mbta_pairs_placed = 0;
         int max_attempts = num_mbta_pairs * 10;
         int attempts = 0;
@@ -185,6 +195,27 @@ static void init_level(int level_index) {
 }
 
 static void spawn_car_in_lane(int lane_index, int dir) {
+    // first make sure we're not too close to other cars
+    for (int i = 0; i < MAX_CARS; i++) {
+        // skip inactive cars
+        if (!cars[i].active) continue;
+        // find the lane in question
+        if (cars[i].lane_index != lane_index) continue;
+
+        // check left edge proximity
+        if (dir > 0) {
+            if (cars[i].x < car_width && cars[i].x >= 0) {
+                return; // skip bc too close
+            }
+        }
+        // check right edge proximity
+        else {
+            if (cars[i].x > screen_width - car_width && cars[i].x <= screen_width) {
+                return; // skip bc too close
+            }
+        }
+    }
+
     // use next free slot
     for (int i = 0; i < MAX_CARS; i++) {
         // mark as active and set lane, direction, and speed
@@ -225,7 +256,7 @@ static void update_cars(void) {
     // spawn a new car every N frames
     frame_counter++;
     if (frame_counter > 1000000) frame_counter = 0; // occasional reset
-    if (frame_counter % 30 == 0) {
+    if (frame_counter % 15 == 0) {
         // pick a random lane
         int index_min = 2;
         int index_max = total_lanes_current - 3;
@@ -233,9 +264,9 @@ static void update_cars(void) {
             int lane_index = index_min + rand() % (index_max - index_min + 1);
 
             // only spawn on normal non-mbta lanes
-            if (mbta_lane_indices[lane_index] == 0) {
-                // pick a random direction
-                int dir = (rand() & 1)? 1 : -1;
+            if (mbta_lane_indices[lane_index] != 1) {
+                // use the lane's random direction
+                int dir = lane_direction[lane_index];
                 spawn_car_in_lane(lane_index, dir);
             }
         }
@@ -288,11 +319,18 @@ static void draw_cars(void) {
                 // skip out of frame
                 if (screen_x < 0 || screen_x >= screen_width) continue;
 
-                int img_idx = (y * car_width + x) * 4;
+                // if car is going left, flip image
+                int src_x = x;
+                if (cars[i].dir < 0) {
+                    src_x = car_width - 1 - x;
+                }
+
+                int img_idx = (y * car_width + src_x) * 4;
                 unsigned char r = car_data[img_idx];
                 unsigned char g = car_data[img_idx + 1];
                 unsigned char b = car_data[img_idx + 2];
                 unsigned char a = car_data[img_idx + 3];
+                
                 if (a < 128) continue;
                 uint16_t color = rgb_to_rgb565(r, g, b);
                 put_pixel(screen_x, screen_y, color);
