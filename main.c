@@ -23,7 +23,7 @@ static int image_y_pos = 0;
 // car sprite
 static unsigned char* car_data = NULL;
 static int car_width = 0, car_height = 0;
-#define MAX_CARS 32
+#define MAX_CARS 64
 typedef struct {
     int active;
     int x;
@@ -123,6 +123,7 @@ static void init_level(int level_index) {
     }
     
     srand(time(NULL) + level_index);  // Different seed per level
+    frame_counter = 0;                // reset car spawn timing
     
     current_level = level_index;
     total_lanes_current = levels[level_index].total_lanes;
@@ -196,6 +197,8 @@ static void init_level(int level_index) {
 
 static void spawn_car_in_lane(int lane_index, int dir) {
     // first make sure we're not too close to other cars
+    const int prox_gap = car_width;
+
     for (int i = 0; i < MAX_CARS; i++) {
         // skip inactive cars
         if (!cars[i].active) continue;
@@ -204,13 +207,13 @@ static void spawn_car_in_lane(int lane_index, int dir) {
 
         // check left edge proximity
         if (dir > 0) {
-            if (cars[i].x < car_width && cars[i].x >= 0) {
+            if (cars[i].x > -prox_gap && cars[i].x < prox_gap) {
                 return; // skip bc too close
             }
         }
         // check right edge proximity
         else {
-            if (cars[i].x > screen_width - car_width && cars[i].x <= screen_width) {
+            if (cars[i].x > screen_width - prox_gap && cars[i].x <= screen_width + prox_gap) {
                 return; // skip bc too close
             }
         }
@@ -241,6 +244,13 @@ static void spawn_car_in_lane(int lane_index, int dir) {
 }
 
 static void update_cars(void) {
+    // adjust spawn frequency
+    int base_interval = 40;
+    // spawn more frequent for higher levels
+    int spawn_interval = base_interval - (current_level * 8);
+    // cap it
+    if (spawn_interval < 4) spawn_interval = 4;
+
     // update each active car's position
     for (int i = 0; i < MAX_CARS; i++) {
         // skip if not active
@@ -253,10 +263,11 @@ static void update_cars(void) {
         }
     }
 
-    // spawn a new car every N frames
     frame_counter++;
     if (frame_counter > 1000000) frame_counter = 0; // occasional reset
-    if (frame_counter % 15 == 0) {
+    
+    // spawn a new car
+    if (frame_counter % spawn_interval == 0) {
         // pick a random lane
         int index_min = 2;
         int index_max = total_lanes_current - 3;
