@@ -24,6 +24,7 @@ static int image_x_pos = 0;
 static int image_y_pos = 0;
 
 // car sprite
+static int car_speed = 2; // default 2, set in init_level (increases with level)
 static unsigned char* car_data = NULL;
 static int car_width = 0, car_height = 0;
 #define MAX_CARS 64
@@ -132,6 +133,9 @@ static void init_level(int level_index) {
     total_lanes_current = levels[level_index].total_lanes;
     int num_mbta_pairs = levels[level_index].num_mbta_pairs;
 
+    // scale speed with level
+    car_speed = 2 + level_index;
+
     // assign random directions to each lane
     for (int i = 0; i < total_lanes_current; i++) {
         lane_direction[i] = (rand() & 1) ? 1 : -1;
@@ -229,7 +233,7 @@ static void spawn_car_in_lane(int lane_index, int dir) {
             cars[i].active = 1;
             cars[i].lane_index = lane_index;
             cars[i].dir = dir;
-            cars[i].speed = 2;
+            cars[i].speed = car_speed;
 
             // center the car vertically in this lane
             cars[i].y = lane_index * LANE_HEIGHT + ((LANE_HEIGHT - car_height) / 2);
@@ -247,20 +251,10 @@ static void spawn_car_in_lane(int lane_index, int dir) {
 }
 
 static void update_cars(void) {
-    // adjust spawn frequency
-    int base_interval = 40;
-    // spawn more frequent for higher levels
-    int spawn_interval = base_interval - (current_level * 8);
-    // cap it
-    if (spawn_interval < 4) spawn_interval = 4;
-
-    // update each active car's position
+    // update position of existing cars
     for (int i = 0; i < MAX_CARS; i++) {
-        // skip if not active
         if (!cars[i].active) continue;
-        // update position
         cars[i].x += cars[i].dir * cars[i].speed;
-        // mark as inactive once it gets off screen
         if (cars[i].x > screen_width || cars[i].x < -car_width) {
             cars[i].active = 0;
         }
@@ -268,24 +262,44 @@ static void update_cars(void) {
 
     frame_counter++;
     if (frame_counter > 1000000) frame_counter = 0; // occasional reset
-    
-    // spawn a new car
-    if (frame_counter % spawn_interval == 0) {
-        // pick a random lane
-        int index_min = 2;
-        int index_max = total_lanes_current - 3;
-        if (index_max > index_min) {
-            int lane_index = index_min + rand() % (index_max - index_min + 1);
 
-            // only spawn on normal non-mbta lanes
-            if (mbta_lane_indices[lane_index] != 1) {
-                // use the lane's random direction
-                int dir = lane_direction[lane_index];
-                spawn_car_in_lane(lane_index, dir);
-            }
+    // spawnable lane range
+    int index_min = 2;
+    int index_max = total_lanes_current - 3;
+    if (index_max <= index_min) return;
+
+    // count spawnable lanes (non-mbta)
+    int spawnable_lanes = 0;
+    for (int lane = index_min; lane <= index_max; lane++) {
+        if (mbta_lane_indices[lane] != 1) spawnable_lanes++;
+    }
+    if (spawnable_lanes <= 0) return;
+
+    // base: level 0, ~8 lanes → interval ≈ 40
+    const int ref_lanes    = 8;
+    const int ref_interval = 35;
+    float interval_f = (float)ref_interval * (float)ref_lanes / (float)spawnable_lanes;
+
+    // make higher levels busier
+    float level_factor = 1.0f + 0.35f * current_level;
+    interval_f /= level_factor;
+
+    int spawn_interval = (int)interval_f;
+    if (spawn_interval < 2) spawn_interval = 2;
+
+    // spawn?
+    if (frame_counter % spawn_interval == 0) {
+        for (int attempts = 0; attempts < 3; attempts++) {
+            int lane_index = index_min + rand() % (index_max - index_min + 1);
+            if (mbta_lane_indices[lane_index] == 1) continue; // skip rail
+            int dir = lane_direction[lane_index];
+            spawn_car_in_lane(lane_index, dir);
+            break;
         }
     }
 }
+
+
 
 static int check_car_collisions(void) {
     // player hitbox
