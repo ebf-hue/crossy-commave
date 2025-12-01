@@ -15,10 +15,11 @@
 
 #define VERTICAL_MOVE_DELAY 6 // min number of frames between steps up or down
 static int vertical_move_cooldown = 0;
-
-static unsigned char *image_data = NULL;
+#define LEVEL_START_DELAY 30 // min number of frames before user can move after popup appears
+static int level_start_cooldown = 0;
 
 // player sprite
+static unsigned char *image_data = NULL;
 static int img_width = 0, img_height = 0;
 static int image_x_pos = 0;
 static int image_y_pos = 0;
@@ -193,6 +194,9 @@ static void init_level(int level_index) {
     
     // Update which lanes are visible
     first_lane_index = camera_y / LANE_HEIGHT;
+
+    // set cooldown so that player doesn't accidentally close the popup by moving upwards
+    level_start_cooldown = LEVEL_START_DELAY;
     
     // Show level intro popup AFTER setting up the new level
     // This way it displays over the new level's background
@@ -304,9 +308,11 @@ static void update_cars(void) {
 
 static int check_car_collisions(void) {
     // player hitbox
-    int px = image_x_pos;
+    const int p_margin_x = 4;
+
+    int px = image_x_pos + p_margin_x;
     int py = image_y_pos;
-    int pw = img_width;
+    int pw = img_width - 2 * p_margin_x;
     int ph = img_height;
 
     // check each car
@@ -809,6 +815,8 @@ static void show_popup_and_wait(unsigned char *popup_data, int popup_width, int 
     present_frame();
     
     // Wait for up button press
+    // first set cooldown so user doesn't accidentally close it too quickly
+    level_start_cooldown = LEVEL_START_DELAY;
     while (waiting && running) {
         quit_press = 0;
         poll_input(&up_press, &down_press, &left_press, &right_press, &quit_press);
@@ -817,9 +825,12 @@ static void show_popup_and_wait(unsigned char *popup_data, int popup_width, int 
             running = 0;
             waiting = 0;
         }
-        if (up_press) {
+        // check that the cooldown has passed
+        if (up_press && level_start_cooldown == 0) {
             waiting = 0;  // Exit on up press
         }
+        // decrement cooldown
+        if (level_start_cooldown > 0) level_start_cooldown--;
         
 #ifdef USE_SDL
         SDL_Delay(16);  // ~60 FPS
@@ -931,29 +942,34 @@ int main(int argc, char *argv[]) {
 
         // decrement movement cooldown
         if (vertical_move_cooldown > 0) vertical_move_cooldown--;
+        // also decrement the level start movement cooldown
+        if (level_start_cooldown > 0) level_start_cooldown--;
 
         // Move character in world space
         // Vertical movement: only in lane increments (34 pixels)
         // only allow movement up/down if enough frames have passed
-        if (vertical_move_cooldown == 0) {
-            if (up) {
-                image_y_pos -= MOVE_STEP;
-                vertical_move_cooldown = VERTICAL_MOVE_DELAY;
+        // also only allow any movement at all if level start delay has passed
+        if (level_start_cooldown == 0) {
+            if (vertical_move_cooldown == 0) {
+                if (up) {
+                    image_y_pos -= MOVE_STEP;
+                    vertical_move_cooldown = VERTICAL_MOVE_DELAY;
+                }
+                else if (down) {
+                    image_y_pos += MOVE_STEP;
+                    vertical_move_cooldown = VERTICAL_MOVE_DELAY;
+                }
             }
-            else if (down) {
-                image_y_pos += MOVE_STEP;
-                vertical_move_cooldown = VERTICAL_MOVE_DELAY;
+            
+            // Horizontal movement: left and right (no camera tracking horizontally)
+            if (left) {
+                image_x_pos -= MOVE_STEP;
+                player_facing_left = 1;
             }
-        }
-        
-        // Horizontal movement: left and right (no camera tracking horizontally)
-        if (left) {
-            image_x_pos -= MOVE_STEP;
-            player_facing_left = 1;
-        }
-        if (right) {
-            image_x_pos += MOVE_STEP;
-            player_facing_left = 0;
+            if (right) {
+                image_x_pos += MOVE_STEP;
+                player_facing_left = 0;
+            }
         }
 
         // Clamp vertical movement within lane bounds
@@ -1003,6 +1019,16 @@ int main(int argc, char *argv[]) {
 
         // check for car collisions
         if (check_car_collisions()) {
+            // draw the collision frame
+            draw_lanes_and_sprite();
+            present_frame();
+            // brief delay so user can perceive the collision
+        #ifdef USE_SDL
+            SDL_Delay(400);     // 400 ms
+        #else
+            usleep(400000);     // 400 ms
+        #endif
+
             // restart this level
             init_level(current_level);
             continue; // don't draw
