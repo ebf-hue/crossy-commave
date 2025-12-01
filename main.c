@@ -13,10 +13,19 @@
 
 #define MOVE_STEP 34
 
+// general
+static volatile int running = 1;
 #define VERTICAL_MOVE_DELAY 6 // min number of frames between steps up or down
 static int vertical_move_cooldown = 0;
 #define LEVEL_START_DELAY 30 // min number of frames before user can move after popup appears
 static int level_start_cooldown = 0;
+
+// Lane management
+#define LANE_HEIGHT 34
+#define MAX_VISIBLE_LANES 10  // screen_height/LANE_HEIGHT + buffer
+#define NUM_MBTA_LANES 3  // Number of MBTA lanes to randomly place
+#define NUM_LEVELS 5
+#define MAX_TOTAL_LANES 35
 
 // player sprite
 static unsigned char *image_data = NULL;
@@ -42,16 +51,25 @@ typedef struct {
 static Car cars[MAX_CARS];
 static int frame_counter = 0; // for spawn timing
 
+// train sprite
+static unsigned char* train_data = NULL;
+static int train_width = 0, train_height = 0;
+static const int TRAIN_SPEED = 2; // train speed is constant
+typedef struct {
+    int active;
+    int lane_index;
+    int x;
+    int y;
+    int dir;        // -1 = left, 1 = right
+    int moving;     // 0 = parked, 1 = moving
+} Train;
+// there can only be max one train per mbta lane
+static Train trains[MAX_TOTAL_LANES];
+
+// screen size
 static int screen_width = 480;
 static int screen_height = 272;
-static volatile int running = 1;
 
-// Lane management
-#define LANE_HEIGHT 34
-#define MAX_VISIBLE_LANES 10  // screen_height/LANE_HEIGHT + buffer
-#define NUM_MBTA_LANES 3  // Number of MBTA lanes to randomly place
-#define NUM_LEVELS 5
-#define MAX_TOTAL_LANES 35
 
 // Level definitions
 typedef struct {
@@ -120,6 +138,12 @@ static void reset_cars(void) {
         cars[i].active = 0;
     }
 }
+// helper function to remove active trains
+static void reset_trains(void) {
+    for (int i = 0; i < MAX_TOTAL_LANES; i++) {
+        trains[i].active = 0;
+    }
+}
 
 static void init_level(int level_index) {
     if (level_index >= NUM_LEVELS) {
@@ -150,6 +174,8 @@ static void init_level(int level_index) {
 
     // reset this level's cars
     reset_cars();
+    // reset this level's trains
+    reset_trains();
     
     // Randomly place MBTA lane pairs
     if (num_lane_types >= 4 && num_mbta_pairs > 0 && total_lanes_current >= 8) {
@@ -172,9 +198,45 @@ static void init_level(int level_index) {
             
             if (can_place) {
                 mbta_lane_indices[start_idx] = -1;
-                mbta_lane_indices[start_idx + 1] = 1;
-                mbta_lane_indices[start_idx + 2] = 1;
+                mbta_lane_indices[start_idx + 1] = 1; // top
+                mbta_lane_indices[start_idx + 2] = 1; // bottom
                 mbta_lane_indices[start_idx + 3] = -2;
+
+                // configure trains
+                // top
+                Train* train_top = &trains[start_idx + 1];
+                train_top->active = 1;
+                train_top->lane_index = start_idx + 1;
+                train_top->moving = rand() & 1; // random 0 for parked or 1 for moving
+                train_top->dir = -1;            // top train always faces left
+                train_top->y = (start_idx + 1) * LANE_HEIGHT + ((LANE_HEIGHT - train_height) / 2); // center vertically
+                // if moving, start off screen
+                if (train_top->moving) {
+                    // also give every moving train a random start delay distance
+                    int offset = rand() % screen_width;
+                    train_top->x = screen_width + offset; // offscreen right
+                } else {
+                    // if parked, start at a random x on screen
+                    train_top->x = rand() % (screen_width - train_width);
+                }
+
+                // bottom
+                Train* train_bottom = &trains[start_idx + 2];
+                train_bottom->active = 1;
+                train_bottom->lane_index = start_idx + 2;
+                train_bottom->moving = rand() & 1; // random 0 for parked or 1 for moving
+                train_bottom->dir = 1;            // bottom train always faces right
+                train_bottom->y = (start_idx + 2) * LANE_HEIGHT + ((LANE_HEIGHT - train_height) / 2); // center vertically
+                // if moving, start off screen
+                if (train_bottom->moving) {
+                    // also give every moving train a random start delay distance
+                    int offset = rand() % screen_width;
+                    train_bottom->x = -train_width - offset; // offscreen left
+                } else {
+                    // if parked, start at a random x on screen
+                    train_bottom->x = rand() % (screen_width - train_width);
+                }
+
                 mbta_pairs_placed++;
             }
             attempts++;
@@ -304,7 +366,23 @@ static void update_cars(void) {
     }
 }
 
+static void update_trains(void) {
+    for (int i = 0; i < MAX_TOTAL_LANES; i++) {
+        Train* t = &trains[i];
+        // skip if parked or not active
+        if (!t->active) continue;
+        if (!t->moving) continue;
+        // update position of moving train
+        t->x += t->dir * TRAIN_SPEED;
 
+        // wrap around to stay in this lane forever hehehehahahaHAHAHAAAHHAAHAHAH!
+        if (t->dir > 0 && t->x > screen_width) { // if moving right off screen
+            t->x = -train_width; // move it back to left side
+        } else if (t->dir < 0 && t->x < -train_width) { // if moving left off screen
+            t->x = screen_width; // move it back to right side
+        }
+    }
+}
 
 static int check_car_collisions(void) {
     // player hitbox
@@ -333,6 +411,29 @@ static int check_car_collisions(void) {
         // collision detected
         if (overlap) return 1;
     }
+
+    // add extra margin for train hitbox
+    const int t_margin_x = 4;
+
+    // check each train
+    for (int i = 0; i < MAX_TOTAL_LANES; i++) {
+        // skip inactive ones
+        if (!trains[i].active) continue;
+
+        // train hitbox
+        int tx = trains[i].x + t_margin_x;
+        int ty = trains[i].y;
+        int tw = train_width - 2 * t_margin_x;
+        int th = train_height;
+
+        int overlap = (px < tx + tw) &&
+            (px + pw > tx) &&
+            (py < ty + th) &&
+            (py + ph > ty);
+        // collision detected
+        if (overlap) return 1;
+    }
+
     // no collisions
     return 0;
 }
@@ -366,6 +467,41 @@ static void draw_cars(void) {
                 unsigned char b = car_data[img_idx + 2];
                 unsigned char a = car_data[img_idx + 3];
                 
+                if (a < 128) continue;
+                uint16_t color = rgb_to_rgb565(r, g, b);
+                put_pixel(screen_x, screen_y, color);
+            }
+        }
+    }
+}
+
+static void draw_trains(void) {
+    for (int i = 0; i < MAX_TOTAL_LANES; i++) {
+        Train* t = &trains[i];
+        // skip inactive ones
+        if (!t->active) continue;
+
+		int sprite_screen_y = t->y - camera_y;
+        for (int y = 0; y < train_height; y++) {
+            int screen_y = sprite_screen_y + y;
+            if (screen_y < 0 || screen_y >= screen_height) continue;
+
+            for (int x = 0; x < train_width; x++) {
+                int screen_x = t->x + x;
+                if (screen_x < 0 || screen_x >= screen_width) continue;
+
+                // flip based on direction just like others
+                int src_x = x;
+                if (t->dir > 0) {
+                    src_x = train_width - 1 - x;
+                }
+
+                int img_idx = (y * train_width + src_x) * 4;
+                unsigned char r = train_data[img_idx];
+                unsigned char g = train_data[img_idx + 1];
+                unsigned char b = train_data[img_idx + 2];
+                unsigned char a = train_data[img_idx + 3];
+
                 if (a < 128) continue;
                 uint16_t color = rgb_to_rgb565(r, g, b);
                 put_pixel(screen_x, screen_y, color);
@@ -439,8 +575,11 @@ static void draw_lanes_and_sprite(void) {
 
     // draw cars
     draw_cars();
+
+    // draw trains
+    draw_trains();
     
-    // Draw sprite at screen position
+    // Draw player sprite at screen position
     int sprite_screen_y = image_y_pos - camera_y;
     
     for (int y = 0; y < img_height; y++) {
@@ -863,6 +1002,16 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // load train sprite
+    int train_channels;
+    train_data = stbi_load("assets/TT.png", &train_width, &train_height, &train_channels, 4);
+    if (!train_data) {
+        fprintf(stderr, "Error: Could not load train sprite\n");
+        stbi_image_free(image_data);
+        stbi_image_free(car_data);
+        return 1;
+    }
+
     // Load level passed popup
     int popup_channels;
     level_passed_data = stbi_load("assets/level_passed.png", &level_passed_width, &level_passed_height, &popup_channels, 4);
@@ -1016,6 +1165,8 @@ int main(int argc, char *argv[]) {
         
         // update car positions
         update_cars();
+        // update train positions
+        update_trains();
 
         // check for car collisions
         if (check_car_collisions()) {
@@ -1046,6 +1197,8 @@ int main(int argc, char *argv[]) {
 
     platform_shutdown();
 
+    // CLEANUP
+
     if (image_data) {
         stbi_image_free(image_data);
         image_data = NULL;
@@ -1054,6 +1207,11 @@ int main(int argc, char *argv[]) {
     if (car_data) {
         stbi_image_free(car_data);
         car_data = NULL;
+    }
+    
+    if (train_data) {
+        stbi_image_free(train_data);
+        train_data = NULL;
     }
     
     if (level_passed_data) {
