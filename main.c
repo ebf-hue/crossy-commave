@@ -34,9 +34,10 @@ static int image_x_pos = 0;
 static int image_y_pos = 0;
 static int player_facing_left = 0; // 1 for left, 0 for right
 
-// car sprite
+// car sprites
+#define NUM_CAR_SPRITES 10 // number of different sprite pngs
 static int car_speed = 2; // default 2, set in init_level (increases with level)
-static unsigned char* car_data = NULL;
+static unsigned char* car_data[NUM_CAR_SPRITES] = {0};
 static int car_width = 0, car_height = 0;
 #define MAX_CARS 64
 typedef struct {
@@ -46,6 +47,7 @@ typedef struct {
     int speed; // px per frame
     int dir; // +1 = right, -1 = left
     int lane_index; // which lane this car belongs to
+    int sprite_index; // which car sprite (color)
 } Car;
 // initialize cars array
 static Car cars[MAX_CARS];
@@ -302,6 +304,9 @@ static void spawn_car_in_lane(int lane_index, int dir) {
             cars[i].dir = dir;
             cars[i].speed = car_speed;
 
+            // randomly pick sprite (color)
+            cars[i].sprite_index = rand() % NUM_CAR_SPRITES;
+
             // center the car vertically in this lane
             cars[i].y = lane_index * LANE_HEIGHT + ((LANE_HEIGHT - car_height) / 2);
 
@@ -442,6 +447,9 @@ static void draw_cars(void) {
     for (int i = 0; i < MAX_CARS; i++) {
         // skip inactive cars
         if (!cars[i].active) continue;
+
+        // get the specific color sprite
+        unsigned char* sprite = car_data[cars[i].sprite_index];
        
         // loop through every pixel
         int sprite_screen_y = cars[i].y - camera_y;
@@ -462,10 +470,10 @@ static void draw_cars(void) {
                 }
 
                 int img_idx = (y * car_width + src_x) * 4;
-                unsigned char r = car_data[img_idx];
-                unsigned char g = car_data[img_idx + 1];
-                unsigned char b = car_data[img_idx + 2];
-                unsigned char a = car_data[img_idx + 3];
+                unsigned char r = sprite[img_idx];
+                unsigned char g = sprite[img_idx + 1];
+                unsigned char b = sprite[img_idx + 2];
+                unsigned char a = sprite[img_idx + 3];
                 
                 if (a < 128) continue;
                 uint16_t color = rgb_to_rgb565(r, g, b);
@@ -993,13 +1001,33 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // load car sprite
+    // load car sprites
+    const char* car_sprites[NUM_CAR_SPRITES] = {
+        "assets/car1.png", // red
+        "assets/car_lightblue.png",
+        "assets/car_mediumblue.png",
+        "assets/car_darkblue.png",
+        "assets/car_lightgreen.png",
+        "assets/car_darkgreen.png",
+        "assets/car_purple.png",
+        "assets/car_white.png",
+        "assets/car_grey.png",
+        "assets/car_black.png"
+    };
+
     int car_channels;
-    car_data = stbi_load("assets/car1.png", &car_width, &car_height, &car_channels, 4);
-    if (!car_data) {
-        fprintf(stderr, "Error: Could not load car sprite\n");
-        stbi_image_free(image_data);
-        return 1;
+    for (int i = 0; i < NUM_CAR_SPRITES; i++) {
+        int w, h;
+        car_data[i] = stbi_load(car_sprites[i], &w, &h, &car_channels, 4);
+        if (!car_data[i]) {
+            fprintf(stderr, "Error: Could not load car sprite %s\n", car_sprites[i]);
+            stbi_image_free(image_data);
+            return 1;
+        }
+        if (i == 0) {
+            car_width = w;
+            car_height = h;
+        }
     }
 
     // load train sprite
@@ -1204,9 +1232,11 @@ int main(int argc, char *argv[]) {
         image_data = NULL;
     }
 
-    if (car_data) {
-        stbi_image_free(car_data);
-        car_data = NULL;
+    for (int i = 0; i < NUM_CAR_SPRITES; i++) {
+        if (car_data[i]) {
+            stbi_image_free(car_data[i]);
+            car_data[i] = NULL;
+        }
     }
     
     if (train_data) {
