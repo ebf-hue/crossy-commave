@@ -52,6 +52,7 @@ typedef struct {
 // initialize cars array
 static Car cars[MAX_CARS];
 static int frame_counter = 0; // for spawn timing
+static void spawn_car_in_lane(int, int);
 
 // train sprite
 static unsigned char* train_data = NULL;
@@ -243,6 +244,27 @@ static void init_level(int level_index) {
             }
             attempts++;
         }
+    }
+
+    // ksenia-proof: start with some cars so that roads aren't empty
+    int initial_cars_max = current_level + 4;
+    int spawned = 0;
+
+    while (spawned < initial_cars_max) {
+        int lane = 2 + rand() % (total_lanes_current - 4);
+        // skip mbta
+        if (mbta_lane_indices[lane] == 1) continue;
+        int dir = lane_direction[lane];
+        // first spawn the car normally
+        spawn_car_in_lane(lane, dir);
+        // then move it to a random x
+        for (int i = 0; i < MAX_CARS; i++) {
+            if (cars[i].active && cars[i].lane_index == lane) {
+                cars[i].x = rand() % (screen_width - car_width);
+                break;
+            }
+        }
+        spawned++;
     }
     
     // Reset character position to bottom start lane
