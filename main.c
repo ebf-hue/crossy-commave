@@ -1054,7 +1054,8 @@ int main(int argc, char *argv[]) {
 
     // load train sprite
     int train_channels;
-    train_data = stbi_load("assets/TT.png", &train_width, &train_height, &train_channels, 4);
+    //train_data = stbi_load("assets/TT.png", &train_width, &train_height, &train_channels, 4);
+    train_data = stbi_load("assets/T2.png", &train_width, &train_height, &train_channels, 4);
     if (!train_data) {
         fprintf(stderr, "Error: Could not load train sprite\n");
         stbi_image_free(image_data);
