@@ -54,6 +54,32 @@ static Car cars[MAX_CARS];
 static int frame_counter = 0; // for spawn timing
 static void spawn_car_in_lane(int, int);
 
+// special vehicles  (bus, bike, scooter)
+#define MAX_SPECIAL_VEHICLES 32
+typedef enum {
+    BUS = 0,
+    BIKE,
+    SCOOTER,
+    TYPE_COUNT
+} SpecialType;
+
+typedef struct {
+    int active;
+    int x, y;
+    int speed;
+    int dir;
+    int lane_index;
+    SpecialType type;
+} SpecialVehicle;
+
+static SpecialVehicle specials[MAX_SPECIAL_VEHICLES];
+static int special_speed[TYPE_COUNT] = {0};
+static int special_frame_counter;
+// special sprites
+static unsigned char* special_data[TYPE_COUNT] = {0};
+static int special_w[TYPE_COUNT] = {0};
+static int special_h[TYPE_COUNT] = {0};
+
 // train sprite
 static unsigned char* train_data = NULL;
 static int train_width = 0, train_height = 0;
@@ -147,6 +173,126 @@ static void reset_trains(void) {
         trains[i].active = 0;
     }
 }
+// helper function to remove active special vehicles
+static void reset_specials(void) {
+    for (int i = 0; i < MAX_SPECIAL_VEHICLES; i++) {
+        specials[i].active = 0;
+    }
+}
+
+// function to spawn a special vehicle (eg bus)
+static void spawn_special_in_lane(int lane_index, int dir) {
+    // for now just use bus
+    SpecialType type = BUS;   
+
+    // TODO: add other type candidates:
+    // SpecialType candidates[VEH_TYPE_COUNT];
+    // int n = 0;
+    // for (int t = 0; t < VEH_TYPE_COUNT; t++) {
+    //     if (special_data[t]) candidates[n++] = t;
+    // }
+    // if (n == 0) return;
+    // type = candidates[rand() % n];
+
+    int w = special_w[type];
+    int h = special_h[type];
+    if (!special_data[type] || w <= 0 || h <= 0) return;
+
+    // simple proximity check vs. other specials in same lane
+    const int prox_gap = w;
+    for (int i = 0; i < MAX_SPECIAL_VEHICLES; i++) {
+        if (!specials[i].active) continue;
+        if (specials[i].lane_index != lane_index) continue;
+
+        if (dir > 0) {
+            if (specials[i].x > -prox_gap && specials[i].x < prox_gap) {
+                return;
+            }
+        } else {
+            if (specials[i].x > screen_width - prox_gap &&
+                specials[i].x < screen_width + prox_gap) {
+                return;
+            }
+        }
+    }
+
+    // also proximity check against cars in this lane
+    for (int i = 0; i < MAX_CARS; i++) {
+        if (!cars[i].active) continue;
+        if (cars[i].lane_index != lane_index) continue;
+
+        int cx = cars[i].x;
+
+        if (dir > 0) {
+            if (cx > -prox_gap && cx < prox_gap) {
+                return;
+            }
+        } else {
+            if (cx > screen_width - prox_gap &&
+                cx < screen_width + prox_gap) {
+                return;
+            }
+        }
+    }
+
+    // find free slot
+    for (int i = 0; i < MAX_SPECIAL_VEHICLES; i++) {
+        if (!specials[i].active) {
+            specials[i].active     = 1;
+            specials[i].lane_index = lane_index;
+            specials[i].dir        = dir;
+            specials[i].type       = type;
+            specials[i].speed      = special_speed[type];
+
+            specials[i].y = lane_index * LANE_HEIGHT + ((LANE_HEIGHT - h) / 2);
+
+            if (dir > 0) specials[i].x = -w;
+            else specials[i].x = screen_width;
+
+            return;
+        }
+    }
+}
+
+// function to update special vehicles
+static void update_specials(void) {
+    // move existing ones
+    for (int i = 0; i < MAX_SPECIAL_VEHICLES; i++) {
+        if (!specials[i].active) continue;
+
+        SpecialVehicle* sv = &specials[i];
+        int w = special_w[sv->type];
+
+        sv->x += sv->dir * sv->speed;
+        // check bounds
+        if (sv->x > screen_width || sv->x < -w) {
+            sv->active = 0;
+        }
+    }
+
+    // spawn timing
+    special_frame_counter++;
+    if (special_frame_counter > 1000000) special_frame_counter = 0;
+
+    const int special_interval = 100;  
+    if (special_frame_counter % special_interval != 0) return;
+
+    int index_min = 2;
+    int index_max = total_lanes_current - 3;
+    if (index_max <= index_min) return;
+
+    // only on non-MBTA road lanes, like cars
+    for (int attempts = 0; attempts < 3; attempts++) {
+        int lane = index_min + rand() % (index_max - index_min + 1);
+        if (mbta_lane_indices[lane] == 1) continue;  // skip MBTA rails
+
+        int dir = lane_direction[lane];
+        spawn_special_in_lane(lane, dir);
+        break;
+    }
+}
+
+
 
 static void init_level(int level_index) {
     if (level_index >= NUM_LEVELS) {
@@ -179,6 +325,8 @@ static void init_level(int level_index) {
     reset_cars();
     // reset this level's trains
     reset_trains();
+    // reset this level's special vehicles
+    reset_specials();
     
     // Randomly place MBTA lane pairs
     if (num_lane_types >= 4 && num_mbta_pairs > 0 && total_lanes_current >= 8) {
@@ -297,6 +445,7 @@ static void spawn_car_in_lane(int lane_index, int dir) {
     // first make sure we're not too close to other cars
     const int prox_gap = car_width;
 
+    // check proximity to other cars
     for (int i = 0; i < MAX_CARS; i++) {
         // skip inactive cars
         if (!cars[i].active) continue;
@@ -313,6 +462,25 @@ static void spawn_car_in_lane(int lane_index, int dir) {
         else {
             if (cars[i].x > screen_width - prox_gap && cars[i].x <= screen_width + prox_gap) {
                 return; // skip bc too close
+            }
+        }
+    }
+
+    // check proximity to special vehicles
+    for (int i = 0; i < MAX_SPECIAL_VEHICLES; i++) {
+        if (!specials[i].active) continue;
+        if (specials[i].lane_index != lane_index) continue;
+
+        int w = special_w[specials[i].type];
+        int sx = specials[i].x;
+
+        if (dir > 0) {
+            if (sx > -w && sx < prox_gap) {
+                return;
+            }
+        } else {
+            if (sx > screen_width - prox_gap && sx < screen_width + w) {
+                return;
             }
         }
     }
@@ -351,6 +519,82 @@ static void update_cars(void) {
         cars[i].x += cars[i].dir * cars[i].speed;
         if (cars[i].x > screen_width || cars[i].x < -car_width) {
             cars[i].active = 0;
+        }
+    }
+
+    // make cars slow down for bus & other special vehicles
+    const int tailgate_gap = car_width; // min distance
+    for (int i = 0; i < MAX_CARS; i++) {
+        if (!cars[i].active) continue;
+        Car* c = &cars[i];
+        
+        int best_dist = screen_width;
+        int best_speed = c->speed;
+        int best_front_x = 0;
+        int found = 0;
+
+        // look for nearest special vehicle ahead in this lane
+        for (int s = 0; s < MAX_SPECIAL_VEHICLES; s++) {
+            SpecialVehicle* sv = &specials[s];
+            if (!specials[s].active) continue;
+            if (sv->lane_index != c->lane_index) continue;
+            if (sv->dir != c->dir) continue;
+
+            int dist;
+            if (c->dir > 0) {
+                // moving right
+                if (sv->x <= c->x) continue;
+                dist = sv->x - c->x;
+            } else {
+                // moving left
+                if (sv->x >= c->x) continue;
+                dist = c->x - sv->x;
+            }
+            if (dist < best_dist) {
+                best_dist = dist;
+                best_speed = sv->speed;
+                best_front_x = sv->x;
+                found = 1;
+            }
+        }
+
+        // now look for nearest car ahead in this lane
+        for (int j = 0; j < MAX_CARS; j++) {
+            if (j == i) continue;
+            Car* c2 = &cars[j];
+            
+            if (!c2->active) continue;
+            if (c2->lane_index != c->lane_index) continue;
+            if (c2->dir != c->dir) continue;
+
+            int dist;
+            if (c->dir > 0) {
+                if (c2->x <= c->x) continue;  // only cars in front (to the right)
+                dist = c2->x - c->x;
+            } else {
+                if (c2->x >= c->x) continue;  // only cars in front (to the left)
+                dist = c->x - c2->x;
+            }
+
+            if (dist < best_dist) {
+                best_dist    = dist;
+                best_speed   = c2->speed;
+                best_front_x = c2->x;
+                found        = 1;
+            }
+        }
+        
+
+        // match speed of the slowpoke
+        if (found && best_dist < tailgate_gap) {
+            if (c->dir > 0) {
+                c->x = best_front_x - tailgate_gap;
+            } else {
+                c->x = best_front_x + tailgate_gap;
+            }
+
+            // match its speed
+            c->speed = best_speed;
         }
     }
 
@@ -411,6 +655,7 @@ static void update_trains(void) {
     }
 }
 
+// check for collisions with cars, trains, and special vehicles
 static int check_car_collisions(void) {
     // player hitbox
     const int p_margin_x = 4;
@@ -458,6 +703,23 @@ static int check_car_collisions(void) {
             (py < ty + th) &&
             (py + ph > ty);
         // collision detected
+        if (overlap) return 1;
+    }
+
+    // check special vehicles (bus, bike, scooter)
+    for (int i = 0; i < MAX_SPECIAL_VEHICLES; i++) {
+        if (!specials[i].active) continue;
+        SpecialVehicle* sv = &specials[i];
+        int w = special_w[sv->type];
+        int h = special_h[sv->type];
+
+        int vx = sv->x;
+        int vy = sv->y;
+
+        int overlap = (px < vx + w) &&
+                      (px + pw > vx) &&
+                      (py < vy + h) &&
+                      (py + ph > vy);
         if (overlap) return 1;
     }
 
@@ -540,6 +802,47 @@ static void draw_trains(void) {
     }
 }
 
+static void draw_specials(void) {
+    for (int i = 0; i < MAX_SPECIAL_VEHICLES; i++) {
+        // skip inactive
+        if (!specials[i].active) continue;
+
+        SpecialVehicle* sv = &specials[i];
+        unsigned char* tex = special_data[sv->type];
+        int w = special_w[sv->type];
+        int h = special_h[sv->type];
+        if (!tex) continue;
+
+        int sprite_screen_y = sv->y - camera_y;
+
+        for (int y = 0; y < h; y++) {
+            int screen_y = sprite_screen_y + y;
+            if (screen_y < 0 || screen_y >= screen_height) continue;
+
+            for (int x = 0; x < w; x++) {
+                int screen_x = sv->x + x;
+                if (screen_x < 0 || screen_x >= screen_width) continue;
+
+                int src_x = x;
+                if (sv->dir > 0) {
+                    src_x = w - 1 - x;
+                }
+
+                int img_idx = (y * w + src_x) * 4;
+                unsigned char r = tex[img_idx];
+                unsigned char g = tex[img_idx + 1];
+                unsigned char b = tex[img_idx + 2];
+                unsigned char a = tex[img_idx + 3];
+
+                if (a < 128) continue;
+                uint16_t color = rgb_to_rgb565(r, g, b);
+                put_pixel(screen_x, screen_y, color);
+            }
+        }
+    }
+}
+
+
 static void draw_lanes_and_sprite(void) {
     clear_screen();
     
@@ -608,6 +911,9 @@ static void draw_lanes_and_sprite(void) {
 
     // draw trains
     draw_trains();
+    
+    // draw special vehicles
+    draw_specials();
     
     // Draw player sprite at screen position
     int sprite_screen_y = image_y_pos - camera_y;
@@ -1063,6 +1369,20 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // load bus sprite
+    int special_channels;
+    special_data[BUS] = stbi_load("assets/bus2.png", &special_w[BUS], &special_h[BUS], &special_channels, 4);
+    if (!special_data[BUS]) {
+        fprintf(stderr, "Error: Could not load bus sprite\n");
+        stbi_image_free(image_data);
+        stbi_image_free(car_data);
+        stbi_image_free(train_data);
+        return 1;
+    }
+    // set bus speed
+    special_speed[BUS] = 1;
+
+
     // Load level passed popup
     int popup_channels;
     level_passed_data = stbi_load("assets/level_passed.png", &level_passed_width, &level_passed_height, &popup_channels, 4);
@@ -1218,6 +1538,8 @@ int main(int argc, char *argv[]) {
         update_cars();
         // update train positions
         update_trains();
+        // update special vehicles positions
+        update_specials();
 
         // check for car collisions
         if (check_car_collisions()) {
@@ -1259,6 +1581,13 @@ int main(int argc, char *argv[]) {
         if (car_data[i]) {
             stbi_image_free(car_data[i]);
             car_data[i] = NULL;
+        }
+    }
+    
+    for (int i = 0; i < TYPE_COUNT; i++) {
+        if (special_data[i]) {
+            stbi_image_free(special_data[i]);
+            special_data[i] = NULL;
         }
     }
     
