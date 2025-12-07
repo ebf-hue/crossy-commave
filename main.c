@@ -16,9 +16,9 @@
 // general
 static volatile int running = 1;
 #define VERTICAL_MOVE_DELAY 6 // min number of frames between steps up or down
-static int vertical_move_cooldown = 0;
+//static int vertical_move_cooldown = 0;
 #define LEVEL_START_DELAY 30 // min number of frames before user can move after popup appears
-static int level_start_cooldown = 0;
+//static int level_start_cooldown = 0;
 
 // Lane management
 #define LANE_HEIGHT 34
@@ -430,7 +430,7 @@ static void init_level(int level_index) {
     first_lane_index = camera_y / LANE_HEIGHT;
 
     // set cooldown so that player doesn't accidentally close the popup by moving upwards
-    level_start_cooldown = LEVEL_START_DELAY;
+    //level_start_cooldown = LEVEL_START_DELAY;
     
     // Show level intro popup AFTER setting up the new level
     // This way it displays over the new level's background
@@ -1088,10 +1088,10 @@ void poll_input(int *up, int *down, int *left, int *right, int *quit) {
 #include <signal.h>
 #include <errno.h>
 
-#define GPIO_BTN0 26
-#define GPIO_BTN1 46
-#define GPIO_BTN2 47
-#define GPIO_BTN3 27
+#define GPIO_BTN0 26 //up
+#define GPIO_BTN1 46 //down
+#define GPIO_BTN2 47 //left 
+#define GPIO_BTN3 27 //right
 #define GPIO_PATH "/sys/class/gpio"
 
 static int fb_fd = -1;
@@ -1099,48 +1099,49 @@ static unsigned short *fbp = NULL;
 static struct fb_var_screeninfo vinfo;
 static struct fb_fix_screeninfo finfo;
 static unsigned long screensize = 0;
+static int up_curr = 0, down_curr = 0, left_curr = 0, right_curr = 0;
+static int up_prev = 0, down_prev = 0, left_prev = 0, right_prev = 0;
+static unsigned short *backbuffer = NULL;  // ← ADD THIS LINE
 
-static int gpio_export(int gpio) {
+int gpio_export(int gpio) {
     char path[64];
-    char buf[16];
+    char buf[4];
 
+    // Check if already exported
     snprintf(path, sizeof(path), GPIO_PATH "/gpio%d", gpio);
     if (access(path, F_OK) == 0) {
-        return 0; // already exported
+        printf("GPIO %d already exported\n", gpio);
+        return 0;
     }
 
     int fd = open(GPIO_PATH "/export", O_WRONLY);
     if (fd < 0) {
-        perror("gpio_export: open export");
+        perror("Failed to open export");
         return -1;
     }
     snprintf(buf, sizeof(buf), "%d", gpio);
-    if (write(fd, buf, strlen(buf)) < 0) {
-        perror("gpio_export: write");
-        close(fd);
-        return -1;
-    }
+    write(fd, buf, strlen(buf));
     close(fd);
-    usleep(100000);
+    usleep(100000); // Wait for GPIO to be exported
     return 0;
 }
 
-static int gpio_unexport(int gpio) {
+int gpio_unexport(int gpio) {
     int fd = open(GPIO_PATH "/unexport", O_WRONLY);
     if (fd < 0) return -1;
-    char buf[16];
+    char buf[4];
     snprintf(buf, sizeof(buf), "%d", gpio);
     write(fd, buf, strlen(buf));
     close(fd);
     return 0;
 }
 
-static int gpio_set_direction(int gpio, const char *direction) {
+int gpio_set_direction(int gpio, const char *direction) {
     char path[64];
     snprintf(path, sizeof(path), GPIO_PATH "/gpio%d/direction", gpio);
     int fd = open(path, O_WRONLY);
     if (fd < 0) {
-        perror("gpio_set_direction");
+        perror("Failed to set direction");
         return -1;
     }
     write(fd, direction, strlen(direction));
@@ -1148,16 +1149,13 @@ static int gpio_set_direction(int gpio, const char *direction) {
     return 0;
 }
 
-static int gpio_get_value(int gpio) {
+int gpio_get_value(int gpio) {
     char path[64];
     char value;
     snprintf(path, sizeof(path), GPIO_PATH "/gpio%d/value", gpio);
     int fd = open(path, O_RDONLY);
-    if (fd < 0) return 0;
-    if (read(fd, &value, 1) < 1) {
-        close(fd);
-        return 0;
-    }
+    if (fd < 0) return -1;
+    read(fd, &value, 1);
     close(fd);
     return (value == '1') ? 1 : 0;
 }
@@ -1197,15 +1195,30 @@ int platform_init(void) {
         return -1;
     }
 
+    backbuffer = (unsigned short *)malloc(screensize);
+    if (!backbuffer) {
+        perror("malloc backbuffer failed");
+        munmap(fbp, screensize);
+        fbp = NULL;
+        close(fb_fd);
+        return -1;
+    }
+
     screen_width  = vinfo.xres;
     screen_height = vinfo.yres;
 
     // GPIO setup
-    if (gpio_export(GPIO_BTN0) < 0 ||
-        gpio_export(GPIO_BTN1) < 0 ||
-        gpio_export(GPIO_BTN2) < 0 ||
-        gpio_export(GPIO_BTN3) < 0) {
-        fprintf(stderr, "Warning: some GPIOs could not be exported\n");
+    if (gpio_export(GPIO_BTN0) < 0) {
+        fprintf(stderr, "Warning: Could not export UP\n");
+    }
+    if (gpio_export(GPIO_BTN1) < 0) {
+        fprintf(stderr, "Warning: Could not export DOWN\n");
+    }
+    if (gpio_export(GPIO_BTN2) < 0) {
+        fprintf(stderr, "Warning: Could not export LEFT\n");
+    }
+    if (gpio_export(GPIO_BTN3) < 0) {
+        fprintf(stderr, "Warning: Could not export RIGHT\n");
     }
 
     gpio_set_direction(GPIO_BTN0, "in");
@@ -1221,6 +1234,12 @@ int platform_init(void) {
 }
 
 void platform_shutdown(void) {
+    // ADD THESE LINES FIRST:
+    if (backbuffer) {
+        free(backbuffer);
+        backbuffer = NULL;
+    }
+
     // Unmap framebuffer
     if (fbp && fbp != MAP_FAILED) {
         munmap(fbp, screensize);
@@ -1239,30 +1258,59 @@ void platform_shutdown(void) {
 }
 
 void clear_screen(void) {
-    if (fbp && screensize > 0) {
-        memset(fbp, 0, screensize);
+    if (backbuffer && screensize > 0) {  // ← CHANGE fbp to backbuffer
+        memset(backbuffer, 0, screensize);  // ← CHANGE fbp to backbuffer
     }
 }
 
 void put_pixel(int x, int y, uint16_t color) {
-    if (!fbp) return;
+    if (!backbuffer) return;  // ← CHANGE fbp to backbuffer
     if (x < 0 || x >= vinfo.xres || y < 0 || y >= vinfo.yres) return;
 
     unsigned long fb_offset = y * finfo.line_length + x * 2;
-    unsigned short *pixel = (unsigned short *)((char *)fbp + fb_offset);
+    unsigned short *pixel = (unsigned short *)((char *)backbuffer + fb_offset);  // ← CHANGE fbp to backbuffer
     *pixel = color;
 }
 
 void present_frame(void) {
-    // nothing needed for real framebuffer
+    // REPLACE "// nothing needed for real framebuffer" WITH:
+    if (fbp && backbuffer && screensize > 0) {
+        memcpy(fbp, backbuffer, screensize);
+    }
 }
 
 void poll_input(int *up, int *down, int *left, int *right, int *quit) {
-    *quit = 0;
-    *up    = gpio_get_value(GPIO_BTN0);
-    *down  = gpio_get_value(GPIO_BTN1);
-    *left  = gpio_get_value(GPIO_BTN2);
-    *right = gpio_get_value(GPIO_BTN3);
+
+    *up = *down = *left = *right = *quit = 0;
+    
+    up_curr = gpio_get_value(GPIO_BTN0);
+    down_curr = gpio_get_value(GPIO_BTN1);
+    left_curr = gpio_get_value(GPIO_BTN2);
+    right_curr = gpio_get_value(GPIO_BTN3);
+
+    if (up_curr < 0 || down_curr < 0 || left_curr < 0 || right_curr < 0) {
+        return;  // ← EXIT FUNCTION HERE - never reaches the checks below
+    }
+    
+    if (up_curr && !up_prev) {
+        *up = 1;
+        }
+    if (down_curr && !down_prev) {
+        *down = 1;
+    }
+    if (left_curr && !left_prev) {
+        *left = 1;
+    }
+    if (right_curr && !right_prev) {
+        *right = 1;
+    }
+
+    // Update previous states
+    up_prev = up_curr;
+    down_prev = down_curr;
+    left_prev = left_curr;
+    right_prev = right_curr;
+
 }
 
 #endif  // !USE_SDL
@@ -1305,11 +1353,11 @@ static void show_popup_and_wait(unsigned char *popup_data, int popup_width, int 
     
     present_frame();
     
-    // Wait for up button press
-    // first set cooldown so user doesn't accidentally close it too quickly
-    level_start_cooldown = LEVEL_START_DELAY;
+    //Wait for up button press
+    //first set cooldown so user doesn't accidentally close it too quickly
+    //level_start_cooldown = LEVEL_START_DELAY;
     while (waiting && running) {
-        quit_press = 0;
+        up_press = 0, down_press = 0, left_press = 0, right_press = 0, quit_press = 0;
         poll_input(&up_press, &down_press, &left_press, &right_press, &quit_press);
         
         if (quit_press) {
@@ -1317,11 +1365,12 @@ static void show_popup_and_wait(unsigned char *popup_data, int popup_width, int 
             waiting = 0;
         }
         // check that the cooldown has passed
-        if (up_press && level_start_cooldown == 0) {
+        // if (up_press && level_start_cooldown == 0) {
+        if (up_press) {
             waiting = 0;  // Exit on up press
         }
         // decrement cooldown
-        if (level_start_cooldown > 0) level_start_cooldown--;
+        //if (level_start_cooldown > 0) level_start_cooldown--;
         
 #ifdef USE_SDL
         SDL_Delay(16);  // ~60 FPS
@@ -1469,7 +1518,8 @@ int main(int argc, char *argv[]) {
     init_level(0);
 
     while (running) {
-        int up, down, left, right, quit = 0;
+
+        int up = 0, down = 0, left = 0, right = 0, quit = 0;
 
         poll_input(&up, &down, &left, &right, &quit);
         if (quit) {
@@ -1477,25 +1527,25 @@ int main(int argc, char *argv[]) {
         }
 
         // decrement movement cooldown
-        if (vertical_move_cooldown > 0) vertical_move_cooldown--;
+        //if (vertical_move_cooldown > 0) vertical_move_cooldown--;
         // also decrement the level start movement cooldown
-        if (level_start_cooldown > 0) level_start_cooldown--;
+        //if (level_start_cooldown > 0) level_start_cooldown--;
 
         // Move character in world space
         // Vertical movement: only in lane increments (34 pixels)
         // only allow movement up/down if enough frames have passed
         // also only allow any movement at all if level start delay has passed
-        if (level_start_cooldown == 0) {
-            if (vertical_move_cooldown == 0) {
+        //if (level_start_cooldown == 0) {
+            //if (vertical_move_cooldown == 0) {
                 if (up) {
                     image_y_pos -= MOVE_STEP;
-                    vertical_move_cooldown = VERTICAL_MOVE_DELAY;
+                    //vertical_move_cooldown = VERTICAL_MOVE_DELAY;
                 }
                 else if (down) {
                     image_y_pos += MOVE_STEP;
-                    vertical_move_cooldown = VERTICAL_MOVE_DELAY;
+                    //vertical_move_cooldown = VERTICAL_MOVE_DELAY;
                 }
-            }
+         //   }
             
             // Horizontal movement: left and right (no camera tracking horizontally)
             if (left) {
@@ -1506,7 +1556,7 @@ int main(int argc, char *argv[]) {
                 image_x_pos += MOVE_STEP;
                 player_facing_left = 0;
             }
-        }
+        //}
 
         // Clamp vertical movement within lane bounds
         if (image_y_pos < 0) image_y_pos = 0;  // Can't go below lane 0
