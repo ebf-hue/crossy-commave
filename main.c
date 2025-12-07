@@ -542,19 +542,27 @@ static void update_cars(void) {
 
             int dist;
             if (c->dir > 0) {
-                // moving right
+                // moving right: leader ahead has larger x (use its left edge)
                 if (sv->x <= c->x) continue;
                 dist = sv->x - c->x;
+                if (dist < best_dist) {
+                    best_dist    = dist;
+                    best_speed   = sv->speed;
+                    best_front_x = sv->x;                  // leader's front = left edge
+                    found        = 1;
+                }
             } else {
-                // moving left
-                if (sv->x >= c->x) continue;
-                dist = c->x - sv->x;
-            }
-            if (dist < best_dist) {
-                best_dist = dist;
-                best_speed = sv->speed;
-                best_front_x = sv->x;
-                found = 1;
+                // moving left: leader ahead is to the LEFT, but we care about its RIGHT edge
+                int w = special_w[sv->type];
+                int leader_right = sv->x + w;             // rear edge
+                if (leader_right >= c->x) continue;       // must be strictly ahead
+                dist = c->x - leader_right;               // gap between leader's rear and car's front
+                if (dist < best_dist) {
+                    best_dist    = dist;
+                    best_speed   = sv->speed;
+                    best_front_x = leader_right;          // store rear edge
+                    found        = 1;
+                }
             }
         }
 
@@ -569,18 +577,26 @@ static void update_cars(void) {
 
             int dist;
             if (c->dir > 0) {
-                if (c2->x <= c->x) continue;  // only cars in front (to the right)
+                // moving right: leader ahead to the right, use left edge
+                if (c2->x <= c->x) continue;
                 dist = c2->x - c->x;
+                if (dist < best_dist) {
+                    best_dist    = dist;
+                    best_speed   = c2->speed;
+                    best_front_x = c2->x;                 // leader's front = left edge
+                    found        = 1;
+                }
             } else {
-                if (c2->x >= c->x) continue;  // only cars in front (to the left)
-                dist = c->x - c2->x;
-            }
-
-            if (dist < best_dist) {
-                best_dist    = dist;
-                best_speed   = c2->speed;
-                best_front_x = c2->x;
-                found        = 1;
+                // moving left: leader ahead to the left, use its RIGHT edge
+                int leader_right = c2->x + car_width;     // rear edge
+                if (leader_right >= c->x) continue;
+                dist = c->x - leader_right;
+                if (dist < best_dist) {
+                    best_dist    = dist;
+                    best_speed   = c2->speed;
+                    best_front_x = leader_right;          // rear edge
+                    found        = 1;
+                }
             }
         }
         
@@ -1380,7 +1396,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     // set bus speed
-    special_speed[BUS] = 1;
+    special_speed[BUS] = car_speed - 1; // a little slower than cars
 
 
     // Load level passed popup
