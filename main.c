@@ -241,7 +241,8 @@ static void spawn_special_in_lane(int lane_index, int dir) {
         if (!specials[i].active) {
             specials[i].active     = 1;
             specials[i].lane_index = lane_index;
-            specials[i].dir        = dir;
+            //specials[i].dir        = dir;
+            specials[i].dir        = 1;
             specials[i].type       = type;
             specials[i].speed      = special_speed[type];
 
@@ -275,7 +276,7 @@ static void update_specials(void) {
     special_frame_counter++;
     if (special_frame_counter > 1000000) special_frame_counter = 0;
 
-    const int special_interval = 100;  
+    const int special_interval = 150;  
     if (special_frame_counter % special_interval != 0) return;
 
     int index_min = 2;
@@ -311,6 +312,7 @@ static void init_level(int level_index) {
 
     // scale speed with level
     car_speed = 2 + level_index;
+    special_speed[BUS] = car_speed - 1; // a little slower than cars
 
     // assign random directions to each lane
     for (int i = 0; i < total_lanes_current; i++) {
