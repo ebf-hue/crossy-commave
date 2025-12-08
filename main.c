@@ -311,8 +311,6 @@ static void init_level(int level_index) {
 
     // scale speed with level
     car_speed = 2 + level_index;
-    special_speed[BUS] = car_speed - 1; // a little slower than cars
-    //special_speed[BUS] = car_speed; // a little slower than cars
 
     // assign random directions to each lane
     for (int i = 0; i < total_lanes_current; i++) {
@@ -398,7 +396,7 @@ static void init_level(int level_index) {
     }
 
     // ksenia-proof: start with some cars so that roads aren't empty
-    int initial_cars_max = current_level + 6;
+    int initial_cars_max = current_level + 4;
     int spawned = 0;
 
     while (spawned < initial_cars_max) {
@@ -551,7 +549,7 @@ static void update_cars(void) {
                 if (dist < best_dist) {
                     best_dist    = dist;
                     best_speed   = sv->speed;
-                    best_front_x = sv->x;                  // leader's front = left edge
+                    best_front_x = sv->x;                     // leader "front" = left edge
                     found        = 1;
                 }
             } else {
@@ -566,6 +564,7 @@ static void update_cars(void) {
                     found        = 1;
                 }
             }
+
         }
 
         // now look for nearest car ahead in this lane
@@ -578,6 +577,7 @@ static void update_cars(void) {
             if (c2->dir != c->dir) continue;
 
             int dist;
+
             if (c->dir > 0) {
                 // moving right: leader ahead to the right, use left edge
                 if (c2->x <= c->x) continue;
@@ -585,10 +585,11 @@ static void update_cars(void) {
                 if (dist < best_dist) {
                     best_dist    = dist;
                     best_speed   = c2->speed;
-                    best_front_x = c2->x;                 // leader's front = left edge
+                    best_front_x = c2->x;                  // leader "front" = left edge
                     found        = 1;
                 }
             } else {
+                // moving left: leader ahead to the LEFT; FRONT = right edge
                 int leader_front = c2->x + car_width;      // car right edge
                 if (leader_front >= c->x) continue;        // must be to the left (ahead)
                 dist = c->x - leader_front;
@@ -599,6 +600,7 @@ static void update_cars(void) {
                     found        = 1;
                 }
             }
+
         }
         
 
@@ -612,13 +614,12 @@ static void update_cars(void) {
             } else {
                 // leader front = right edge; put follower so its left edge touches that:
                 // follower_left = leader_right
-                // but only clamp if next movement would go past the target spot
-                int target = best_front_x;
                 c->x = best_front_x;
             }
 
             c->speed = best_speed;
         }
+
     }
 
     frame_counter++;
@@ -638,7 +639,7 @@ static void update_cars(void) {
 
     // base: level 0, ~8 lanes → interval ≈ 40
     const int ref_lanes    = 8;
-    const int ref_interval = 35;
+    const int ref_interval = 40;
     float interval_f = (float)ref_interval * (float)ref_lanes / (float)spawnable_lanes;
 
     // make higher levels busier
@@ -681,7 +682,8 @@ static void update_trains(void) {
 // check for collisions with cars, trains, and special vehicles
 static int check_car_collisions(void) {
     // player hitbox
-    const int p_margin_x = 4;
+    //const int p_margin_x = 4;
+    const int p_margin_x = 16;
 
     int px = image_x_pos + p_margin_x;
     int py = image_y_pos;
@@ -1658,7 +1660,7 @@ int main(int argc, char *argv[]) {
             present_frame();
             // brief delay so user can perceive the collision
         #ifdef USE_SDL
-            SDL_Delay(400);     // 400 ms
+            SDL_Delay(800);     // 400 ms
         #else
             usleep(400000);     // 400 ms
         #endif
