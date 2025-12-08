@@ -106,11 +106,17 @@ typedef struct {
 } LevelConfig;
 
 static LevelConfig levels[NUM_LEVELS] = {
+    // {12, 1},   // Level 1: 10 game lanes + 2 start lanes, 1 MBTA pair
+    // {20, 2},   // Level 2: 15 game lanes + 2 start lanes, 2 MBTA pairs
+    // {30, 3},   // Level 3: 20 game lanes + 2 start lanes, 3 MBTA pairs
+    // {40, 4},   // Level 4: 25 game lanes + 2 start lanes, 4 MBTA pairs
+    // {55, 5}    // Level 5: 30 game lanes + 2 start lanes, 5 MBTA pairs
+
     {12, 1},   // Level 1: 10 game lanes + 2 start lanes, 1 MBTA pair
     {17, 2},   // Level 2: 15 game lanes + 2 start lanes, 2 MBTA pairs
     {22, 3},   // Level 3: 20 game lanes + 2 start lanes, 3 MBTA pairs
     {27, 4},   // Level 4: 25 game lanes + 2 start lanes, 4 MBTA pairs
-    {32, 5}    // Level 5: 30 game lanes + 2 start lanes, 5 MBTA pairs
+    {32, 5}
 };
 
 typedef struct {
@@ -1243,10 +1249,19 @@ int platform_init(void) {
     signal(SIGINT,  signal_handler);
     signal(SIGTERM, signal_handler);
 
+    // Hide cursor
+    printf("\033[?25l");
+    fflush(stdout);
+
     return 0;
 }
 
 void platform_shutdown(void) {
+
+    // Show cursor
+    printf("\033[?25h");
+    fflush(stdout);
+    
     // ADD THESE LINES FIRST:
     if (backbuffer) {
         free(backbuffer);
