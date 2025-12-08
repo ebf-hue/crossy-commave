@@ -396,7 +396,7 @@ static void init_level(int level_index) {
     }
 
     // ksenia-proof: start with some cars so that roads aren't empty
-    int initial_cars_max = current_level + 6;
+    int initial_cars_max = current_level + 4;
     int spawned = 0;
 
     while (spawned < initial_cars_max) {
@@ -554,13 +554,14 @@ static void update_cars(void) {
                 }
             } else {
                 // moving left: leader ahead is to the LEFT, but we care about its RIGHT edge
-                int leader_front = sv->x + special_w[sv->type];  // bus right edge
-                if (leader_front >= c->x) continue;              // must be strictly ahead
-                dist = c->x - leader_front;                      // gap: follower left - bus front
+                int w = special_w[sv->type];
+                int leader_right = sv->x + w;             // rear edge
+                if (leader_right >= c->x) continue;       // must be strictly ahead
+                dist = c->x - leader_right;               // gap between leader's rear and car's front
                 if (dist < best_dist) {
                     best_dist    = dist;
                     best_speed   = sv->speed;
-                    best_front_x = leader_front;                 // store *front* (right edge)
+                    best_front_x = leader_right;          // store rear edge
                     found        = 1;
                 }
             }
@@ -588,13 +589,13 @@ static void update_cars(void) {
                 }
             } else {
                 // moving left: leader ahead to the left, use its RIGHT edge
-                int leader_front = c2->x + car_width;      // car right edge
-                if (leader_front >= c->x) continue;        // must be to the left (ahead)
-                dist = c->x - leader_front;
+                int leader_right = c2->x + car_width;     // rear edge
+                if (leader_right >= c->x) continue;
+                dist = c->x - leader_right;
                 if (dist < best_dist) {
                     best_dist    = dist;
                     best_speed   = c2->speed;
-                    best_front_x = leader_front;           // store *front* (right edge)
+                    best_front_x = leader_right;          // rear edge
                     found        = 1;
                 }
             }
@@ -603,19 +604,13 @@ static void update_cars(void) {
 
         // match speed of the slowpoke
         if (found && best_dist < tailgate_gap) {
-
             if (c->dir > 0) {
-                // leader front = left edge; put follower so its right edge touches that:
-                // follower_left = leader_left - car_width
-                c->x = best_front_x - tailgate_gap;    // tailgate_gap == car_width
+                c->x = best_front_x - tailgate_gap;
             } else {
-                // leader front = right edge; put follower so its left edge touches that:
-                // follower_left = leader_right
-                // but only clamp if next movement would go past the target spot
-                int target = best_front_x;
-                c->x = best_front_x;  // ← NO GAP APPLIED!
+                c->x = best_front_x + tailgate_gap;
             }
 
+            // match its speed
             c->speed = best_speed;
         }
     }

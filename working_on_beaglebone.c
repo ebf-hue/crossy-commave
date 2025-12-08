@@ -8,6 +8,7 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+
 // ---------- Common config ----------
 
 #define MOVE_STEP 34
@@ -119,10 +120,8 @@ typedef struct {
     int height;
 } Lane;
 
-static Lane lane_templates[6];
+static Lane lane_templates[6];  // 0=bottom, 1=middle, 2=top, 3=MBTA, 4=start, 5=building
 static int num_lane_types = 0;
-static Lane level_top_building[NUM_LEVELS];     // Top building for each level
-static Lane level_bottom_building[NUM_LEVELS];  // Bottom building for each level
 static int camera_y = 0;  // Camera offset in world space
 static int first_lane_index = 0;  // Which lane is at the top
 static int mbta_lane_indices[35];  // Support up to 35 lanes max
@@ -396,7 +395,7 @@ static void init_level(int level_index) {
     }
 
     // ksenia-proof: start with some cars so that roads aren't empty
-    int initial_cars_max = current_level + 6;
+    int initial_cars_max = current_level + 4;
     int spawned = 0;
 
     while (spawned < initial_cars_max) {
@@ -554,13 +553,14 @@ static void update_cars(void) {
                 }
             } else {
                 // moving left: leader ahead is to the LEFT, but we care about its RIGHT edge
-                int leader_front = sv->x + special_w[sv->type];  // bus right edge
-                if (leader_front >= c->x) continue;              // must be strictly ahead
-                dist = c->x - leader_front;                      // gap: follower left - bus front
+                int w = special_w[sv->type];
+                int leader_right = sv->x + w;             // rear edge
+                if (leader_right >= c->x) continue;       // must be strictly ahead
+                dist = c->x - leader_right;               // gap between leader's rear and car's front
                 if (dist < best_dist) {
                     best_dist    = dist;
                     best_speed   = sv->speed;
-                    best_front_x = leader_front;                 // store *front* (right edge)
+                    best_front_x = leader_right;          // store rear edge
                     found        = 1;
                 }
             }
@@ -588,13 +588,13 @@ static void update_cars(void) {
                 }
             } else {
                 // moving left: leader ahead to the left, use its RIGHT edge
-                int leader_front = c2->x + car_width;      // car right edge
-                if (leader_front >= c->x) continue;        // must be to the left (ahead)
-                dist = c->x - leader_front;
+                int leader_right = c2->x + car_width;     // rear edge
+                if (leader_right >= c->x) continue;
+                dist = c->x - leader_right;
                 if (dist < best_dist) {
                     best_dist    = dist;
                     best_speed   = c2->speed;
-                    best_front_x = leader_front;           // store *front* (right edge)
+                    best_front_x = leader_right;          // rear edge
                     found        = 1;
                 }
             }
@@ -603,19 +603,13 @@ static void update_cars(void) {
 
         // match speed of the slowpoke
         if (found && best_dist < tailgate_gap) {
-
             if (c->dir > 0) {
-                // leader front = left edge; put follower so its right edge touches that:
-                // follower_left = leader_left - car_width
-                c->x = best_front_x - tailgate_gap;    // tailgate_gap == car_width
+                c->x = best_front_x - tailgate_gap;
             } else {
-                // leader front = right edge; put follower so its left edge touches that:
-                // follower_left = leader_right
-                // but only clamp if next movement would go past the target spot
-                int target = best_front_x;
-                c->x = best_front_x;  // ← NO GAP APPLIED!
+                c->x = best_front_x + tailgate_gap;
             }
 
+            // match its speed
             c->speed = best_speed;
         }
     }
@@ -883,23 +877,21 @@ static void draw_lanes_and_sprite(void) {
         
         // Choose which lane texture to use
         // Lane structure for each level:
-        // Lane -1 (off top): top building for current level
+        // Lane -1 (off top): building (if visible)
         // Lane 0: start_lane (beginning)
         // Lane 1: top_lane
         // Lanes 2 to total_lanes_current-3: middle lanes (with potential MBTA)
         // Lane total_lanes_current-2: bottom_lane
         // Lane total_lanes_current-1: start_lane (end)
-        // Lane total_lanes_current (off bottom): bottom building for current level
+        // Lane total_lanes_current (off bottom): building (if visible)
         Lane *lane;
         if (lane_index < -1) continue; // quick bounds check
-        if (lane_index == -1) {
-            lane = &level_top_building[current_level];  // Level-specific top building
-        } else if (lane_index == total_lanes_current) {
-            lane = &level_bottom_building[current_level];  // Level-specific bottom building
+        if (lane_index == -1 || lane_index == total_lanes_current) {
+            lane = &lane_templates[5];  // building (sandwich lanes)
         } else if (lane_index == 0) {
             lane = &lane_templates[4];  // start_lane (beginning)
         } else if (lane_index == total_lanes_current - 1) {
-            lane = &lane_templates[5];  // start_lane (end)
+            lane = &lane_templates[4];  // start_lane (end)
         } else if (lane_index == 1) {
             lane = &lane_templates[2];  // top_lane (after start)
         } else if (lane_index == total_lanes_current - 2) {
@@ -1484,15 +1476,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Load lane types (bottom=0, middle=1, top=2, MBTA=3, start=4)
-    const char *lane_files[] = {
-        "assets/bottom_lane.png", 
-        "assets/middle_lane.png", 
-        "assets/top_lane.png", 
-        "assets/MBTA_lane.png", 
-        "assets/street_top.png",
-        "assets/street_bottom.png"
-    };
+    // Load lane types (bottom=0, middle=1, top=2, MBTA=3, start=4, building=5)
+    const char *lane_files[] = {"assets/bottom_lane.png", "assets/middle_lane.png", "assets/top_lane.png", "assets/MBTA_lane.png", "assets/start_lane.png", "assets/building.png"};
     
     for (int i = 0; i < 6; i++) {
         int w, h;
@@ -1503,34 +1488,6 @@ int main(int argc, char *argv[]) {
             num_lane_types++;
         } else {
             fprintf(stderr, "Warning: Could not load %s\n", lane_files[i]);
-        }
-    }
-    
-    // Load level-specific building textures
-    for (int i = 0; i < NUM_LEVELS; i++) {
-        char top_filename[64];
-        char bottom_filename[64];
-        
-        snprintf(top_filename, sizeof(top_filename), "assets/Level%d_top.png", i + 1);
-        snprintf(bottom_filename, sizeof(bottom_filename), "assets/Level%d_bottom.png", i + 1);
-        
-        int w, h;
-        level_top_building[i].data = stbi_load(top_filename, &w, &h, NULL, 3);
-        if (level_top_building[i].data) {
-            level_top_building[i].width = w;
-            level_top_building[i].height = h;
-            printf("Loaded %s (%dx%d)\n", top_filename, w, h);
-        } else {
-            fprintf(stderr, "Warning: Could not load %s\n", top_filename);
-        }
-        
-        level_bottom_building[i].data = stbi_load(bottom_filename, &w, &h, NULL, 3);
-        if (level_bottom_building[i].data) {
-            level_bottom_building[i].width = w;
-            level_bottom_building[i].height = h;
-            printf("Loaded %s (%dx%d)\n", bottom_filename, w, h);
-        } else {
-            fprintf(stderr, "Warning: Could not load %s\n", bottom_filename);
         }
     }
     
@@ -1724,16 +1681,6 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < num_lane_types; i++) {
         if (lane_templates[i].data) {
             stbi_image_free(lane_templates[i].data);
-        }
-    }
-    
-    // Free level-specific building textures
-    for (int i = 0; i < NUM_LEVELS; i++) {
-        if (level_top_building[i].data) {
-            stbi_image_free(level_top_building[i].data);
-        }
-        if (level_bottom_building[i].data) {
-            stbi_image_free(level_bottom_building[i].data);
         }
     }
 
