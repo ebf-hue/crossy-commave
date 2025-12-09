@@ -3,7 +3,7 @@ CC_PC  := gcc
 SRC    := main.c
 EXEC   := sprite_test
 
-all: laptop
+all: beaglebone
 
 beaglebone:
 	$(CC_BB) -static -O2 -o $(EXEC) $(SRC) -lm

@@ -35,7 +35,8 @@ static int player_facing_left = 0; // 1 for left, 0 for right
 
 // car sprites
 #define NUM_CAR_SPRITES 10 // number of different sprite pngs
-static int car_speed = 2; // default 2, set in init_level (increases with level)
+//static int car_speed = 6; // default 2, set in init_level (increases with level)
+static int car_speed = 3; // default 2, set in init_level (increases with level)
 static unsigned char* car_data[NUM_CAR_SPRITES] = {0};
 static int car_width = 0, car_height = 0;
 #define MAX_CARS 64
@@ -106,17 +107,11 @@ typedef struct {
 } LevelConfig;
 
 static LevelConfig levels[NUM_LEVELS] = {
-    // {12, 1},   // Level 1: 10 game lanes + 2 start lanes, 1 MBTA pair
-    // {20, 2},   // Level 2: 15 game lanes + 2 start lanes, 2 MBTA pairs
-    // {30, 3},   // Level 3: 20 game lanes + 2 start lanes, 3 MBTA pairs
-    // {40, 4},   // Level 4: 25 game lanes + 2 start lanes, 4 MBTA pairs
-    // {55, 5}    // Level 5: 30 game lanes + 2 start lanes, 5 MBTA pairs
-
     {12, 1},   // Level 1: 10 game lanes + 2 start lanes, 1 MBTA pair
     {17, 2},   // Level 2: 15 game lanes + 2 start lanes, 2 MBTA pairs
     {22, 3},   // Level 3: 20 game lanes + 2 start lanes, 3 MBTA pairs
     {27, 4},   // Level 4: 25 game lanes + 2 start lanes, 4 MBTA pairs
-    {32, 5}
+    {32, 5}    // Level 5: 30 game lanes + 2 start lanes, 5 MBTA pairs
 };
 
 typedef struct {
@@ -317,7 +312,7 @@ static void init_level(int level_index) {
     int num_mbta_pairs = levels[level_index].num_mbta_pairs;
 
     // scale speed with level
-    car_speed = 2 + level_index;
+    car_speed = 3 + level_index;
     special_speed[BUS] = car_speed - 1; // a little slower than cars
 
     // assign random directions to each lane
@@ -1249,19 +1244,10 @@ int platform_init(void) {
     signal(SIGINT,  signal_handler);
     signal(SIGTERM, signal_handler);
 
-    // Hide cursor
-    printf("\033[?25l");
-    fflush(stdout);
-
     return 0;
 }
 
 void platform_shutdown(void) {
-
-    // Show cursor
-    printf("\033[?25h");
-    fflush(stdout);
-    
     // ADD THESE LINES FIRST:
     if (backbuffer) {
         free(backbuffer);
@@ -1693,7 +1679,7 @@ int main(int argc, char *argv[]) {
 #ifdef USE_SDL
         SDL_Delay(16);      // ~60 FPS
 #else
-        usleep(50000);      // 50 ms
+        usleep(16000);      // 60 fps
 #endif
     }
 
