@@ -7,5 +7,5 @@ The game includes custom graphics for 5 predefined levels. Difficulty gradually 
 ## How to play ##
 Compile for your laptop with "make laptop" or for Beaglebone with "make beaglebone", then simply run the executable with ./sprite_test or ./sprite_fasterer. Press ctrl-C to quit the game.
 
-On laptop, use the arrow keys to move up, down, left, and right. Press the up arrow to start and move between levels.
-On Beaglebone, use the four GPIO pushbuttons to move up, down, left, and right. Press the top button to start and move between levels.
+- On laptop, use the arrow keys to move up, down, left, and right. Press the up arrow to start and move between levels.
+- On Beaglebone, use the four GPIO pushbuttons to move up, down, left, and right. Press the top button to start and move between levels.
