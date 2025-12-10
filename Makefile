@@ -1,6 +1,6 @@
 CC_BB  := arm-linux-gnueabihf-gcc
 CC_PC  := gcc
-SRC    := main.c declarations.c platform.c
+SRC    := main.c declarations.c platform.c vehicle.c
 EXEC   := sprite_test
 
 all: laptop
