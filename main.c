@@ -1,193 +1,50 @@
-// SDL2 on laptop, framebuffer+GPIO on BeagleBone
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
 
+#include "declarations.h"
+
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
-// ---------- Common config ----------
 
-#define MOVE_STEP 34
+#ifdef USE_SDL
+#include <SDL2/SDL.h>
+#else
+#include <unistd.h>
+#endif
 
-// general
-static volatile int running = 1;
-#define VERTICAL_MOVE_DELAY 6 // min number of frames between steps up or down
-//static int vertical_move_cooldown = 0;
-#define LEVEL_START_DELAY 30 // min number of frames before user can move after popup appears
-//static int level_start_cooldown = 0;
-
-// Lane management
-#define LANE_HEIGHT 34
-#define MAX_VISIBLE_LANES 10  // screen_height/LANE_HEIGHT + buffer
-#define NUM_MBTA_LANES 3  // Number of MBTA lanes to randomly place
-#define NUM_LEVELS 5
-#define MAX_TOTAL_LANES 35
-
-// player sprite
-static unsigned char *image_data = NULL;
-static int img_width = 0, img_height = 0;
-static int image_x_pos = 0;
-static int image_y_pos = 0;
-static int player_facing_left = 0; // 1 for left, 0 for right
-
-// car sprites
-#define NUM_CAR_SPRITES 10 // number of different sprite pngs
-//static int car_speed = 6; // default 2, set in init_level (increases with level)
-static int car_speed = 3; // default 2, set in init_level (increases with level)
-static unsigned char* car_data[NUM_CAR_SPRITES] = {0};
-static int car_width = 0, car_height = 0;
-#define MAX_CARS 64
-typedef struct {
-    int active;
-    int x;
-    int y;
-    int speed; // px per frame
-    int dir; // +1 = right, -1 = left
-    int lane_index; // which lane this car belongs to
-    int sprite_index; // which car sprite (color)
-} Car;
-// initialize cars array
-static Car cars[MAX_CARS];
-static int frame_counter = 0; // for spawn timing
+//FORWARD DECLARATIONS
+static void show_popup_and_wait(unsigned char *popup_data, int popup_width, int popup_height);
 static void spawn_car_in_lane(int, int);
 
-// special vehicles  (bus, bike, scooter)
-#define MAX_SPECIAL_VEHICLES 32
-typedef enum {
-    BUS = 0,
-    BIKE,
-    SCOOTER,
-    TYPE_COUNT
-} SpecialType;
-
-typedef struct {
-    int active;
-    int x, y;
-    int speed;
-    int dir;
-    int lane_index;
-    SpecialType type;
-} SpecialVehicle;
-
-static SpecialVehicle specials[MAX_SPECIAL_VEHICLES];
-static int special_speed[TYPE_COUNT] = {0};
-static int special_frame_counter;
-// special sprites
-static unsigned char* special_data[TYPE_COUNT] = {0};
-static int special_w[TYPE_COUNT] = {0};
-static int special_h[TYPE_COUNT] = {0};
-
-// train sprite
-static unsigned char* train_data = NULL;
-static int train_width = 0, train_height = 0;
-static const int TRAIN_SPEED = 2; // train speed is constant
-typedef struct {
-    int active;
-    int lane_index;
-    int x;
-    int y;
-    int dir;        // -1 = left, 1 = right
-    int moving;     // 0 = parked, 1 = moving
-} Train;
-// there can only be max one train per mbta lane
-static Train trains[MAX_TOTAL_LANES];
-
-// screen size
-static int screen_width = 480;
-static int screen_height = 272;
-
-
-// Level definitions
-typedef struct {
-    int total_lanes;
-    int num_mbta_pairs;
-} LevelConfig;
-
-static LevelConfig levels[NUM_LEVELS] = {
-    {12, 1},   // Level 1: 10 game lanes + 2 start lanes, 1 MBTA pair
-    {17, 2},   // Level 2: 15 game lanes + 2 start lanes, 2 MBTA pairs
-    {22, 3},   // Level 3: 20 game lanes + 2 start lanes, 3 MBTA pairs
-    {27, 4},   // Level 4: 25 game lanes + 2 start lanes, 4 MBTA pairs
-    {32, 5}    // Level 5: 30 game lanes + 2 start lanes, 5 MBTA pairs
-};
-
-typedef struct {
-    unsigned char *data;
-    int width;
-    int height;
-} Lane;
-
-static Lane lane_templates[6];
-static int num_lane_types = 0;
-static Lane level_top_building[NUM_LEVELS];     // Top building for each level
-static Lane level_bottom_building[NUM_LEVELS];  // Bottom building for each level
-static int camera_y = 0;  // Camera offset in world space
-static int first_lane_index = 0;  // Which lane is at the top
-static int mbta_lane_indices[35];  // Support up to 35 lanes max
-static int current_level = 0;
-static int total_lanes_current = 0;
-
-// store traffic direction for each lane
-static int lane_direction[MAX_TOTAL_LANES]; // +1 = right, -1 = left
-
-// Level passed popup
-static unsigned char *level_passed_data = NULL;
-static int level_passed_width = 0;
-static int level_passed_height = 0;
-
-// Level intro and end popups (5 levels)
-static unsigned char *level_intro_data[NUM_LEVELS] = {NULL};
-static int level_intro_width[NUM_LEVELS] = {0};
-static int level_intro_height[NUM_LEVELS] = {0};
-
-static unsigned char *level_end_data[NUM_LEVELS] = {NULL};
-static int level_end_width[NUM_LEVELS] = {0};
-static int level_end_height[NUM_LEVELS] = {0};
-
-// Platform abstraction
-int  platform_init(void);
-void platform_shutdown(void);
-void clear_screen(void);
-void put_pixel(int x, int y, uint16_t color);
-void present_frame(void);
-void poll_input(int *up, int *down, int *left, int *right, int *quit);
-
-// Forward declaration
-static void show_popup_and_wait(unsigned char *popup_data, int popup_width, int popup_height);
-
-// ---------- Shared helpers ----------
-
+//HELPER FUNCTIONS
 static uint16_t rgb_to_rgb565(unsigned char r, unsigned char g, unsigned char b) {
     return (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 }
-// helper function to remove active cars
-static void reset_cars(void) {
+
+static void reset_cars(void) { //remove active cars
     for (int i = 0; i < MAX_CARS; i++) {
         cars[i].active = 0;
     }
 }
-// helper function to remove active trains
-static void reset_trains(void) {
+
+static void reset_trains(void) { //remove active trains
     for (int i = 0; i < MAX_TOTAL_LANES; i++) {
         trains[i].active = 0;
     }
 }
-// helper function to remove active special vehicles
-static void reset_specials(void) {
+
+static void reset_specials(void) { //remove active special vehicles
     for (int i = 0; i < MAX_SPECIAL_VEHICLES; i++) {
         specials[i].active = 0;
     }
 }
 
-// function to spawn a special vehicle (eg bus)
-static void spawn_special_in_lane(int lane_index, int dir) {
-    // for now just use bus
-    SpecialType type = BUS;   
+static void spawn_special_in_lane(int lane_index, int dir) { // spawn a special vehicle (for now just bus)
 
-    // TODO: add other type candidates:
+    // for future type candidates:
     // SpecialType candidates[VEH_TYPE_COUNT];
     // int n = 0;
     // for (int t = 0; t < VEH_TYPE_COUNT; t++) {
@@ -195,7 +52,8 @@ static void spawn_special_in_lane(int lane_index, int dir) {
     // }
     // if (n == 0) return;
     // type = candidates[rand() % n];
-
+    
+    SpecialType type = BUS;   
     int w = special_w[type];
     int h = special_h[type];
     if (!special_data[type] || w <= 0 || h <= 0) return;
@@ -257,8 +115,7 @@ static void spawn_special_in_lane(int lane_index, int dir) {
     }
 }
 
-// function to update special vehicles
-static void update_specials(void) {
+static void update_specials(void) { // function to update special vehicles
     // move existing ones
     for (int i = 0; i < MAX_SPECIAL_VEHICLES; i++) {
         if (!specials[i].active) continue;
@@ -295,9 +152,7 @@ static void update_specials(void) {
     }
 }
 
-
-
-static void init_level(int level_index) {
+static void init_level(int level_index) { //level intialization
     if (level_index >= NUM_LEVELS) {
         printf("All levels completed!\n");
         running = 0;
@@ -419,25 +274,19 @@ static void init_level(int level_index) {
         spawned++;
     }
     
-    // Reset character position to bottom start lane
+    // reset character position to bottom start lane
     image_x_pos = (screen_width - img_width) / 2;
     image_y_pos = (total_lanes_current - 1) * LANE_HEIGHT + (LANE_HEIGHT - img_height) / 2;
     if (image_x_pos < 0) image_x_pos = 0;
     
-    // Reset camera to show building lane at bottom
-    // We want the building lane (at total_lanes_current * LANE_HEIGHT) to be visible at the bottom of screen
-    // So camera should start at: (total_lanes_current + 1) * LANE_HEIGHT - screen_height
+    // reset camera to show building lane at bottom
     camera_y = ((total_lanes_current + 1) * LANE_HEIGHT) - screen_height;
     if (camera_y < -LANE_HEIGHT) camera_y = -LANE_HEIGHT;
     
-    // Update which lanes are visible
+    // update which lanes are visible
     first_lane_index = camera_y / LANE_HEIGHT;
 
-    // set cooldown so that player doesn't accidentally close the popup by moving upwards
-    //level_start_cooldown = LEVEL_START_DELAY;
-    
-    // Show level intro popup AFTER setting up the new level
-    // This way it displays over the new level's background
+    //show level intro popup AFTER setting up the new level
     if (level_intro_data[level_index]) {
         show_popup_and_wait(level_intro_data[level_index], 
                            level_intro_width[level_index], 
@@ -874,11 +723,11 @@ static void draw_specials(void) {
 static void draw_lanes_and_sprite(void) {
     clear_screen();
     
-    // Draw lanes
+    // draw lanes
     for (int i = -1; i < MAX_VISIBLE_LANES; i++) {
         int lane_index = first_lane_index + i;
         
-        // Stop drawing if we're past the building lane after the last level lane
+        //stop drawing if past the building lane after the last level lane
         if (lane_index > total_lanes_current) break;
         
         int lane_world_y = lane_index * LANE_HEIGHT;
@@ -887,39 +736,33 @@ static void draw_lanes_and_sprite(void) {
         if (lane_screen_y > screen_height) break;
         if (lane_screen_y + LANE_HEIGHT < 0) continue;
         
-        // Choose which lane texture to use
-        // Lane structure for each level:
-        // Lane -1 (off top): top building for current level
-        // Lane 0: start_lane (beginning)
-        // Lane 1: top_lane
-        // Lanes 2 to total_lanes_current-3: middle lanes (with potential MBTA)
-        // Lane total_lanes_current-2: bottom_lane
-        // Lane total_lanes_current-1: start_lane (end)
-        // Lane total_lanes_current (off bottom): bottom building for current level
+        //LANE ORDER AHH
         Lane *lane;
-        if (lane_index < -1) continue; // quick bounds check
-        if (lane_index == -1) {
-            lane = &level_top_building[current_level];  // Level-specific top building
-        } else if (lane_index == total_lanes_current) {
-            lane = &level_bottom_building[current_level];  // Level-specific bottom building
-        } else if (lane_index == 0) {
-            lane = &lane_templates[4];  // start_lane (beginning)
-        } else if (lane_index == total_lanes_current - 1) {
-            lane = &lane_templates[5];  // start_lane (end)
-        } else if (lane_index == 1) {
-            lane = &lane_templates[2];  // top_lane (after start)
-        } else if (lane_index == total_lanes_current - 2) {
-            lane = &lane_templates[0];  // bottom_lane (before end start)
-        } else if (mbta_lane_indices[lane_index] == 1) {
-            lane = &lane_templates[3];  // MBTA_lane
+        if (lane_index < -1) continue;
+        
+        if (lane_index == -1) {  //FIRST LANE
+            lane = &level_top_building[current_level];  // level-specific top building
+        } else if (lane_index == total_lanes_current) { //LAST LANE
+            lane = &level_bottom_building[current_level];  // level-specific bottom building
+        } else if (lane_index == 0) { //bottom sidewalk lane
+            lane = &lane_templates[4];
+        } else if (lane_index == total_lanes_current - 1) { //second to last lane (sidewalk)
+            lane = &lane_templates[5];
+        } else if (lane_index == 1) { //road start bottom (blank lower half)
+            lane = &lane_templates[2];
+        } else if (lane_index == total_lanes_current - 2) { //2 before last lane,  //road top (blank upper half)
+            lane = &lane_templates[0];
+        } else if (mbta_lane_indices[lane_index] == 1) {  
+            lane = &lane_templates[3];
         } else if (mbta_lane_indices[lane_index] == -1) {
-            lane = &lane_templates[0];  // bottom_lane (border above MBTA)
+            lane = &lane_templates[0];
         } else if (mbta_lane_indices[lane_index] == -2) {
-            lane = &lane_templates[2];  // top_lane (border below MBTA)
+            lane = &lane_templates[2];
         } else {
-            lane = &lane_templates[1];  // middle_lane
+            lane = &lane_templates[1];
         }
         
+        //DRAW THEM
         for (int y = 0; y < lane->height && y < LANE_HEIGHT; y++) {
             int screen_y = lane_screen_y + y;
             if (screen_y < 0 || screen_y >= screen_height) continue;
@@ -962,7 +805,7 @@ static void draw_lanes_and_sprite(void) {
                 src_x = img_width - 1 - x;
             }
 
-            int img_idx = (y * img_width + src_x) * 4;  // 4 channels: RGBA
+            int img_idx = (y * img_width + src_x) * 4;  // 4 rgba channels
             unsigned char r = image_data[img_idx];
             unsigned char g = image_data[img_idx + 1];
             unsigned char b = image_data[img_idx + 2];
@@ -977,370 +820,18 @@ static void draw_lanes_and_sprite(void) {
     }
 }
 
-// ---------- SDL backend (laptop / macOS) ----------
 
-#ifdef USE_SDL
-
-#include <SDL2/SDL.h>
-
-static SDL_Window   *window   = NULL;
-static SDL_Renderer *renderer = NULL;
-static SDL_Texture  *texture  = NULL;
-static uint16_t     *framebuffer = NULL;
-
-int platform_init(void) {
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
-        fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
-        return -1;
-    }
-
-    window = SDL_CreateWindow(
-        "Sprite Test",
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        screen_width, screen_height,
-        SDL_WINDOW_SHOWN
-    );
-    if (!window) {
-        fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
-        return -1;
-    }
-
-    renderer = SDL_CreateRenderer(window, -1, 0);
-    if (!renderer) {
-        fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
-        return -1;
-    }
-
-    texture = SDL_CreateTexture(
-        renderer,
-        SDL_PIXELFORMAT_RGB565,
-        SDL_TEXTUREACCESS_STREAMING,
-        screen_width,
-        screen_height
-    );
-    if (!texture) {
-        fprintf(stderr, "SDL_CreateTexture failed: %s\n", SDL_GetError());
-        return -1;
-    }
-
-    framebuffer = (uint16_t *)malloc(screen_width * screen_height * sizeof(uint16_t));
-    if (!framebuffer) {
-        fprintf(stderr, "Failed to allocate framebuffer\n");
-        return -1;
-    }
-
-    return 0;
-}
-
-void platform_shutdown(void) {
-    if (framebuffer) {
-        free(framebuffer);
-        framebuffer = NULL;
-    }
-    if (texture) {
-        SDL_DestroyTexture(texture);
-        texture = NULL;
-    }
-    if (renderer) {
-        SDL_DestroyRenderer(renderer);
-        renderer = NULL;
-    }
-    if (window) {
-        SDL_DestroyWindow(window);
-        window = NULL;
-    }
-    SDL_Quit();
-}
-
-void clear_screen(void) {
-    memset(framebuffer, 0, screen_width * screen_height * sizeof(uint16_t));
-}
-
-void put_pixel(int x, int y, uint16_t color) {
-    if (x < 0 || x >= screen_width || y < 0 || y >= screen_height) return;
-    framebuffer[y * screen_width + x] = color;
-}
-
-void present_frame(void) {
-    SDL_UpdateTexture(texture, NULL, framebuffer, screen_width * sizeof(uint16_t));
-    SDL_RenderClear(renderer);
-    SDL_RenderCopy(renderer, texture, NULL, NULL);
-    SDL_RenderPresent(renderer);
-}
-
-void poll_input(int *up, int *down, int *left, int *right, int *quit) {
-    *up = *down = *left = *right = 0;
-    SDL_Event e;
-
-    while (SDL_PollEvent(&e)) {
-        if (e.type == SDL_QUIT) {
-            *quit = 1;
-        } else if (e.type == SDL_KEYDOWN) {
-            switch (e.key.keysym.sym) {
-                case SDLK_ESCAPE: *quit = 1; break;
-                case SDLK_UP:     *up    = 1; break;
-                case SDLK_DOWN:   *down  = 1; break;
-                case SDLK_LEFT:   *left  = 1; break;
-                case SDLK_RIGHT:  *right = 1; break;
-                default: break;
-            }
-        }
-    }
-}
-
-#endif  // USE_SDL
-
-// ---------- Framebuffer + GPIO backend (BeagleBone) ----------
-
-#ifndef USE_SDL
-
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <linux/fb.h>
-#include <sys/mman.h>
-#include <signal.h>
-#include <errno.h>
-
-#define GPIO_BTN0 26 //up
-#define GPIO_BTN1 46 //down
-#define GPIO_BTN2 47 //left 
-#define GPIO_BTN3 27 //right
-#define GPIO_PATH "/sys/class/gpio"
-
-static int fb_fd = -1;
-static unsigned short *fbp = NULL;
-static struct fb_var_screeninfo vinfo;
-static struct fb_fix_screeninfo finfo;
-static unsigned long screensize = 0;
-static int up_curr = 0, down_curr = 0, left_curr = 0, right_curr = 0;
-static int up_prev = 0, down_prev = 0, left_prev = 0, right_prev = 0;
-static unsigned short *backbuffer = NULL;  // ← ADD THIS LINE
-
-int gpio_export(int gpio) {
-    char path[64];
-    char buf[4];
-
-    // Check if already exported
-    snprintf(path, sizeof(path), GPIO_PATH "/gpio%d", gpio);
-    if (access(path, F_OK) == 0) {
-        printf("GPIO %d already exported\n", gpio);
-        return 0;
-    }
-
-    int fd = open(GPIO_PATH "/export", O_WRONLY);
-    if (fd < 0) {
-        perror("Failed to open export");
-        return -1;
-    }
-    snprintf(buf, sizeof(buf), "%d", gpio);
-    write(fd, buf, strlen(buf));
-    close(fd);
-    usleep(100000); // Wait for GPIO to be exported
-    return 0;
-}
-
-int gpio_unexport(int gpio) {
-    int fd = open(GPIO_PATH "/unexport", O_WRONLY);
-    if (fd < 0) return -1;
-    char buf[4];
-    snprintf(buf, sizeof(buf), "%d", gpio);
-    write(fd, buf, strlen(buf));
-    close(fd);
-    return 0;
-}
-
-int gpio_set_direction(int gpio, const char *direction) {
-    char path[64];
-    snprintf(path, sizeof(path), GPIO_PATH "/gpio%d/direction", gpio);
-    int fd = open(path, O_WRONLY);
-    if (fd < 0) {
-        perror("Failed to set direction");
-        return -1;
-    }
-    write(fd, direction, strlen(direction));
-    close(fd);
-    return 0;
-}
-
-int gpio_get_value(int gpio) {
-    char path[64];
-    char value;
-    snprintf(path, sizeof(path), GPIO_PATH "/gpio%d/value", gpio);
-    int fd = open(path, O_RDONLY);
-    if (fd < 0) return -1;
-    read(fd, &value, 1);
-    close(fd);
-    return (value == '1') ? 1 : 0;
-}
-
-static void signal_handler(int signo) {
-    if (signo == SIGINT || signo == SIGTERM) {
-        running = 0;
-    }
-}
-
-int platform_init(void) {
-    // load framebuffer
-    fb_fd = open("/dev/fb0", O_RDWR);
-    if (fb_fd < 0) {
-        perror("open /dev/fb0");
-        return -1;
-    }
-
-    if (ioctl(fb_fd, FBIOGET_VSCREENINFO, &vinfo) < 0) {
-        perror("FBIOGET_VSCREENINFO");
-        close(fb_fd);
-        return -1;
-    }
-    if (ioctl(fb_fd, FBIOGET_FSCREENINFO, &finfo) < 0) {
-        perror("FBIOGET_FSCREENINFO");
-        close(fb_fd);
-        return -1;
-    }
-
-    screensize = finfo.line_length * vinfo.yres;
-    fbp = (unsigned short *)mmap(0, screensize, PROT_READ | PROT_WRITE,
-                                 MAP_SHARED, fb_fd, 0);
-    if (fbp == MAP_FAILED) {
-        perror("mmap framebuffer");
-        fbp = NULL;
-        close(fb_fd);
-        return -1;
-    }
-
-    backbuffer = (unsigned short *)malloc(screensize);
-    if (!backbuffer) {
-        perror("malloc backbuffer failed");
-        munmap(fbp, screensize);
-        fbp = NULL;
-        close(fb_fd);
-        return -1;
-    }
-
-    screen_width  = vinfo.xres;
-    screen_height = vinfo.yres;
-
-    // GPIO setup
-    if (gpio_export(GPIO_BTN0) < 0) {
-        fprintf(stderr, "Warning: Could not export UP\n");
-    }
-    if (gpio_export(GPIO_BTN1) < 0) {
-        fprintf(stderr, "Warning: Could not export DOWN\n");
-    }
-    if (gpio_export(GPIO_BTN2) < 0) {
-        fprintf(stderr, "Warning: Could not export LEFT\n");
-    }
-    if (gpio_export(GPIO_BTN3) < 0) {
-        fprintf(stderr, "Warning: Could not export RIGHT\n");
-    }
-
-    gpio_set_direction(GPIO_BTN0, "in");
-    gpio_set_direction(GPIO_BTN1, "in");
-    gpio_set_direction(GPIO_BTN2, "in");
-    gpio_set_direction(GPIO_BTN3, "in");
-
-    // signals
-    signal(SIGINT,  signal_handler);
-    signal(SIGTERM, signal_handler);
-
-    return 0;
-}
-
-void platform_shutdown(void) {
-    // ADD THESE LINES FIRST:
-    if (backbuffer) {
-        free(backbuffer);
-        backbuffer = NULL;
-    }
-
-    // Unmap framebuffer
-    if (fbp && fbp != MAP_FAILED) {
-        munmap(fbp, screensize);
-        fbp = NULL;
-    }
-    if (fb_fd >= 0) {
-        close(fb_fd);
-        fb_fd = -1;
-    }
-
-    // Unexport GPIOs
-    gpio_unexport(GPIO_BTN0);
-    gpio_unexport(GPIO_BTN1);
-    gpio_unexport(GPIO_BTN2);
-    gpio_unexport(GPIO_BTN3);
-}
-
-void clear_screen(void) {
-    if (backbuffer && screensize > 0) {  // ← CHANGE fbp to backbuffer
-        memset(backbuffer, 0, screensize);  // ← CHANGE fbp to backbuffer
-    }
-}
-
-void put_pixel(int x, int y, uint16_t color) {
-    if (!backbuffer) return;  // ← CHANGE fbp to backbuffer
-    if (x < 0 || x >= vinfo.xres || y < 0 || y >= vinfo.yres) return;
-
-    unsigned long fb_offset = y * finfo.line_length + x * 2;
-    unsigned short *pixel = (unsigned short *)((char *)backbuffer + fb_offset);  // ← CHANGE fbp to backbuffer
-    *pixel = color;
-}
-
-void present_frame(void) {
-    // REPLACE "// nothing needed for real framebuffer" WITH:
-    if (fbp && backbuffer && screensize > 0) {
-        memcpy(fbp, backbuffer, screensize);
-    }
-}
-
-void poll_input(int *up, int *down, int *left, int *right, int *quit) {
-
-    *up = *down = *left = *right = *quit = 0;
-    
-    up_curr = gpio_get_value(GPIO_BTN0);
-    down_curr = gpio_get_value(GPIO_BTN1);
-    left_curr = gpio_get_value(GPIO_BTN2);
-    right_curr = gpio_get_value(GPIO_BTN3);
-
-    if (up_curr < 0 || down_curr < 0 || left_curr < 0 || right_curr < 0) {
-        return;  // ← EXIT FUNCTION HERE - never reaches the checks below
-    }
-    
-    if (up_curr && !up_prev) {
-        *up = 1;
-        }
-    if (down_curr && !down_prev) {
-        *down = 1;
-    }
-    if (left_curr && !left_prev) {
-        *left = 1;
-    }
-    if (right_curr && !right_prev) {
-        *right = 1;
-    }
-
-    // Update previous states
-    up_prev = up_curr;
-    down_prev = down_curr;
-    left_prev = left_curr;
-    right_prev = right_curr;
-
-}
-
-#endif  // !USE_SDL
-
-// ---------- Shared popup function ----------
-
+// LEVEL POPUP FUNCTION
 static void show_popup_and_wait(unsigned char *popup_data, int popup_width, int popup_height) {
     if (!popup_data) return;
     
     int waiting = 1;
     int up_press, down_press, left_press, right_press, quit_press;
     
-    // Draw the current game state first
+    //draw current game state
     draw_lanes_and_sprite();
     
-    // Draw popup centered on screen on top of the game
+    // draw popup over it
     int popup_x = (screen_width - popup_width) / 2;
     int popup_y = (screen_height - popup_height) / 2;
     
@@ -1367,9 +858,7 @@ static void show_popup_and_wait(unsigned char *popup_data, int popup_width, int 
     
     present_frame();
     
-    //Wait for up button press
-    //first set cooldown so user doesn't accidentally close it too quickly
-    //level_start_cooldown = LEVEL_START_DELAY;
+    // wait for "up" buttom press
     while (waiting && running) {
         up_press = 0, down_press = 0, left_press = 0, right_press = 0, quit_press = 0;
         poll_input(&up_press, &down_press, &left_press, &right_press, &quit_press);
@@ -1378,24 +867,20 @@ static void show_popup_and_wait(unsigned char *popup_data, int popup_width, int 
             running = 0;
             waiting = 0;
         }
-        // check that the cooldown has passed
-        // if (up_press && level_start_cooldown == 0) {
         if (up_press) {
-            waiting = 0;  // Exit on up press
+            waiting = 0;  // exit on up press
         }
-        // decrement cooldown
-        //if (level_start_cooldown > 0) level_start_cooldown--;
-        
+
+        //different delays funcs for mac and beaglebone
 #ifdef USE_SDL
         SDL_Delay(16);  // ~60 FPS
 #else
-        usleep(16000);  // 16 ms
+        usleep(16000);
 #endif
     }
 }
 
-// ---------- Shared main ----------
-
+// MAIN ---------------------------------------------------
 int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
@@ -1439,7 +924,6 @@ int main(int argc, char *argv[]) {
 
     // load train sprite
     int train_channels;
-    //train_data = stbi_load("assets/TT.png", &train_width, &train_height, &train_channels, 4);
     train_data = stbi_load("assets/T2.png", &train_width, &train_height, &train_channels, 4);
     if (!train_data) {
         fprintf(stderr, "Error: Could not load train sprite\n");
@@ -1461,12 +945,7 @@ int main(int argc, char *argv[]) {
     // set bus speed
     special_speed[BUS] = car_speed - 1; // a little slower than cars
 
-
-    // Load level passed popup
-    int popup_channels;
-    level_passed_data = stbi_load("assets/level_passed.png", &level_passed_width, &level_passed_height, &popup_channels, 4);
-
-    // Load level intro and end popups for all levels
+    // load level intro and end popups 
     for (int i = 0; i < NUM_LEVELS; i++) {
         char intro_filename[64];
         char end_filename[64];
@@ -1489,8 +968,8 @@ int main(int argc, char *argv[]) {
             fprintf(stderr, "Warning: Could not load %s\n", end_filename);
         }
     }
-
-    // Load lane types (bottom=0, middle=1, top=2, MBTA=3, start=4)
+    
+    //load lane graphics
     const char *lane_files[] = {
         "assets/bottom_lane.png", 
         "assets/middle_lane.png", 
@@ -1512,7 +991,7 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    // Load level-specific building textures
+    //load specific building graphics for all levels 
     for (int i = 0; i < NUM_LEVELS; i++) {
         char top_filename[64];
         char bottom_filename[64];
@@ -1540,18 +1019,6 @@ int main(int argc, char *argv[]) {
         }
     }
     
-    if (num_lane_types < 3) {
-        fprintf(stderr, "Error: Need at least bottom, middle, and top lanes\n");
-        stbi_image_free(image_data);
-        stbi_image_free(car_data);
-        for (int i = 0; i < num_lane_types; i++) {
-            if (lane_templates[i].data) {
-                stbi_image_free(lane_templates[i].data);
-            }
-        }
-        return 1;
-    }
-    
     if (platform_init() != 0) {
         stbi_image_free(image_data);
         stbi_image_free(car_data);
@@ -1563,90 +1030,75 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Initialize first level
+    // initialize first level
     init_level(0);
 
     while (running) {
-
+        
+        //PREVENT CHAOS
         int up = 0, down = 0, left = 0, right = 0, quit = 0;
 
+        //get direction inputs
         poll_input(&up, &down, &left, &right, &quit);
         if (quit) {
             running = 0;
         }
 
-        // decrement movement cooldown
-        //if (vertical_move_cooldown > 0) vertical_move_cooldown--;
-        // also decrement the level start movement cooldown
-        //if (level_start_cooldown > 0) level_start_cooldown--;
+        //movement only in lane increments (MOVE_STEP = 34 pixels)
+        if (up) {
+            image_y_pos -= MOVE_STEP;
+        }
+        if (down) {
+            image_y_pos += MOVE_STEP;
+        }
+        if (left) {
+            image_x_pos -= MOVE_STEP;
+            player_facing_left = 1;
+        }
+        if (right) {
+            image_x_pos += MOVE_STEP;
+            player_facing_left = 0;
+        }
 
-        // Move character in world space
-        // Vertical movement: only in lane increments (34 pixels)
-        // only allow movement up/down if enough frames have passed
-        // also only allow any movement at all if level start delay has passed
-        //if (level_start_cooldown == 0) {
-            //if (vertical_move_cooldown == 0) {
-                if (up) {
-                    image_y_pos -= MOVE_STEP;
-                    //vertical_move_cooldown = VERTICAL_MOVE_DELAY;
-                }
-                else if (down) {
-                    image_y_pos += MOVE_STEP;
-                    //vertical_move_cooldown = VERTICAL_MOVE_DELAY;
-                }
-         //   }
-            
-            // Horizontal movement: left and right (no camera tracking horizontally)
-            if (left) {
-                image_x_pos -= MOVE_STEP;
-                player_facing_left = 1;
-            }
-            if (right) {
-                image_x_pos += MOVE_STEP;
-                player_facing_left = 0;
-            }
-        //}
-
-        // Clamp vertical movement within lane bounds
+        //vertical movement within lane bounds
         if (image_y_pos < 0) image_y_pos = 0;  // Can't go below lane 0
         if (image_y_pos > (total_lanes_current - 1) * LANE_HEIGHT) 
-            image_y_pos = (total_lanes_current - 1) * LANE_HEIGHT;  // Can't go above top lane
+            image_y_pos = (total_lanes_current - 1) * LANE_HEIGHT;  // cant go above second to last lane
         
-        // Check if player reached the top lane (lane 0)
+        // at top lane?
         int current_lane = image_y_pos / LANE_HEIGHT;
         if (current_lane == 0) {
-            // Level completed!
-            // Show level end popup
+            // Level completed! -> show popup
             if (level_end_data[current_level]) {
                 show_popup_and_wait(level_end_data[current_level], 
                                    level_end_width[current_level], 
                                    level_end_height[current_level]);
             }
             
-            // Move to next level
+            // next level
             if (running) {
                 init_level(current_level + 1);
             }
-            continue;  // Skip rest of loop, start fresh frame
+            continue;
         }
         
-        // Clamp horizontal movement only
+        // clamp horizontal movement
         if (image_x_pos < 0) image_x_pos = 0;
         if (image_x_pos > screen_width - img_width)
             image_x_pos = screen_width - img_width;
 
-        // Update camera to follow player (keep player in middle of screen when moving up)
-        int target_screen_y = screen_height / 2;  // Middle of screen
+        // keep player in middle of screen when moving up
+        int target_screen_y = screen_height / 2;  // middle of screen
         camera_y = image_y_pos - target_screen_y;
         
-        // Clamp camera so it doesn't go past the edges (including building lanes)
-        // Allow camera to show building lane at top (lane -1)
-        if (camera_y < -LANE_HEIGHT) camera_y = -LANE_HEIGHT;  // Don't scroll past building lane at top
-        // Allow camera to show building lane at bottom (lane total_lanes_current)
+        //CAMERA CLAMP VERTICAL
+        //show buildings at top
+        if (camera_y < -LANE_HEIGHT) camera_y = -LANE_HEIGHT;
+        //show buildings lane at bottom
         int max_camera_y = ((total_lanes_current + 1) * LANE_HEIGHT) - screen_height;
-        if (camera_y > max_camera_y) camera_y = max_camera_y;  // Don't scroll past building lane at bottom
-
-        // Update which lanes are visible
+        if (camera_y > max_camera_y) camera_y = max_camera_y;
+        
+        //update cam
         first_lane_index = camera_y / LANE_HEIGHT;
         
         // update car positions
